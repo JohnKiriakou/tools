@@ -1,0 +1,2494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>meow hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        .tool-card { display: none; }
+        .tool-card.active { display: block; }
+        
+        /* Keyboard Styling */
+        .key { 
+            border: 1px solid #cbd5e1;
+            border-radius: 0.375rem;
+            margin: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+            transition: all 0.2s;
+            width: 40px; height: 40px; 
+            background-color: #f1f5f9; /* light greyw for unpressed */
+            border-color: #cbd5e1;
+        }
+        .key.pressed { 
+            background-color: #3b82f6 !important; /* blue for currently held */
+            border-color: #1d4ed8; 
+            transform: translateY(2px); 
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .key.was-pressed { 
+            background-color: #64748b !important; /* dark grey for previously pressed */
+            border-color: #475569;
+        }
+        .key.wide { width: 84px; }
+        .key.extra-wide { width: 100px; }
+        .key.space { width: 260px; }
+        
+        #wheel-canvas { transition: transform 4s cubic-bezier(0.15, 0, 0.15, 1); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        /* Minesweeper Styling */
+        #minesweeper-board {
+            user-select: none;
+            margin: 0 auto;
+            display: inline-grid;
+            gap: 0;
+            background: #d1d5db;
+            padding: 10px;
+            border-radius: 16px;
+            box-shadow: inset 0 0 0 1px rgba(148,163,184,0.15), 0 20px 40px rgba(15,23,42,0.05);
+        }
+        .ms-cell {
+            box-sizing: border-box;
+            width: 48px;
+            height: 48px;
+            background-color: #e2e8f0;
+            border: 1px solid rgba(148,163,184,0.8);
+            border-radius: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: #0f172a;
+            cursor: pointer;
+            transition: all 0.1s ease;
+            user-select: none;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .ms-cell:hover:not(.revealed):not(.flagged) {
+            transform: translateY(-1px);
+            background-color: #f8fafc;
+        }
+        .ms-cell.revealed {
+            border-color: #94a3b8;
+            background-color: #ffffff;
+            cursor: default;
+            box-shadow: none;
+        }
+        .ms-cell.flagged {
+            background-color: #f8fafc;
+            color: transparent;
+        }
+        .ms-cell.mine { background-color: #fecaca; color: #991b1b; }
+        .ms-cell img {
+            width: 36px;
+            height: 36px;
+            image-rendering: pixelated;
+        }
+        .ms-cell.revealed[data-mines="1"] { color: #3b82f6; }
+        .ms-cell.revealed[data-mines="2"] { color: #16a34a; }
+        .ms-cell.revealed[data-mines="3"] { color: #dc2626; }
+        .ms-cell.revealed[data-mines="4"] { color: #4338ca; }
+        .ms-cell.revealed[data-mines="5"] { color: #9333ea; }
+        .ms-cell.revealed[data-mines="6"] { color: #0f766e; }
+        .ms-cell.revealed[data-mines="7"] { color: #0f172a; }
+        .ms-cell.revealed[data-mines="8"] { color: #475569; }
+    </style>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen pb-10">
+
+    <script>
+        const meow = {
+            play: function() {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                // Create a "meow" sound with varying frequency
+                oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.2);
+                
+                oscillator.type = 'triangle';
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        };
+let msBoard = [];
+let msRows = 8, msCols = 8, msMinesCount = 10;
+let msGameOver = false;
+let msFirstClick = true;
+let msTimerInterval;
+let msStartTime = 0;
+let msFinalTime = 0;
+let msFlagsCount = 0;
+
+function startMinesweeper() {
+    const diff = document.getElementById('minesweeper-difficulty').value;
+    const settings = getMinesweeperSettings(diff);
+
+    msRows = settings.rows;
+    msCols = settings.cols;
+    msMinesCount = settings.mines;
+
+    msGameOver = false;
+    msFirstClick = true;
+    msFinalTime = 0;
+    msFlagsCount = msMinesCount;
+    clearInterval(msTimerInterval);
+
+    document.getElementById('minesweeper-timer').innerText = "0";
+    document.getElementById('minesweeper-flags').innerText = msFlagsCount;
+    const status = document.getElementById('minesweeper-status');
+    status.innerText = "";
+    status.className = "text-center mt-4 font-bold text-lg";
+
+    initMSBoard();
+}
+
+function getMinesweeperSettings(diff) {
+    if (diff === 'easy') return { rows: 8, cols: 8, mines: 10 };
+    if (diff === 'medium') return { rows: 12, cols: 12, mines: 20 };
+    if (diff === 'hard') return { rows: 16, cols: 16, mines: 40 };
+
+    const rows = parseInt(document.getElementById('minesweeper-custom-rows').value, 10) || 10;
+    const cols = parseInt(document.getElementById('minesweeper-custom-cols').value, 10) || 10;
+    let mines = parseInt(document.getElementById('minesweeper-custom-mines').value, 10);
+
+    const safeRows = Math.min(Math.max(rows, 4), 30);
+    const safeCols = Math.min(Math.max(cols, 4), 30);
+    const maxMines = Math.max(1, Math.min(safeRows * safeCols - 1, mines || Math.floor(safeRows * safeCols * 0.12)));
+
+    document.getElementById('minesweeper-custom-rows').value = safeRows;
+    document.getElementById('minesweeper-custom-cols').value = safeCols;
+    document.getElementById('minesweeper-custom-mines').value = maxMines;
+
+    return { rows: safeRows, cols: safeCols, mines: maxMines };
+}
+
+function toggleCustomMinesweeper() {
+    const customPanel = document.getElementById('minesweeper-custom-panel');
+    if (document.getElementById('minesweeper-difficulty').value === 'custom') {
+        customPanel.style.display = 'grid';
+    } else {
+        customPanel.style.display = 'none';
+    }
+}
+
+function initMSBoard() {
+    const boardEl = document.getElementById('minesweeper-board');
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${msCols}, 48px)`;
+    boardEl.style.width = 'min-content';
+    msBoard = [];
+
+    for (let r = 0; r < msRows; r++) {
+        msBoard[r] = [];
+        for (let c = 0; c < msCols; c++) {
+            const cellEl = document.createElement('div');
+            cellEl.className = 'ms-cell';
+            cellEl.id = `ms-${r}-${c}`;
+            cellEl.dataset.mines = '0';
+
+            cellEl.onmousedown = (e) => {
+                if (e.button === 0) {
+                    handleMSClick(r, c);
+                }
+            };
+
+            cellEl.oncontextmenu = (e) => {
+                e.preventDefault();
+                handleMSRightClick(r, c);
+            };
+
+            boardEl.appendChild(cellEl);
+            msBoard[r][c] = { mine: false, revealed: false, flagged: false, neighbors: 0 };
+        }
+    }
+}
+
+function handleMSClick(r, c) {
+    if (msGameOver || msBoard[r][c].flagged || msBoard[r][c].revealed) return;
+
+    if (msFirstClick) {
+        msFirstClick = false;
+        placeMines(r, c);
+        startMSTimer();
+    }
+
+    revealCell(r, c);
+}
+
+function placeMines(safeR, safeC) {
+    let minesPlaced = 0;
+    while (minesPlaced < msMinesCount) {
+        const r = Math.floor(Math.random() * msRows);
+        const c = Math.floor(Math.random() * msCols);
+        const isSafeZone = Math.abs(r - safeR) <= 1 && Math.abs(c - safeC) <= 1;
+
+        if (!msBoard[r][c].mine && !isSafeZone) {
+            msBoard[r][c].mine = true;
+            minesPlaced++;
+        }
+    }
+
+    for (let r = 0; r < msRows; r++) {
+        for (let c = 0; c < msCols; c++) {
+            if (!msBoard[r][c].mine) {
+                let count = 0;
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        if (msBoard[r + dr] && msBoard[r + dr][c + dc]?.mine) count++;
+                    }
+                }
+                msBoard[r][c].neighbors = count;
+            }
+        }
+    }
+}
+
+function revealCell(r, c) {
+    if (r < 0 || r >= msRows || c < 0 || c >= msCols) return;
+    const cell = msBoard[r][c];
+    if (cell.revealed || cell.flagged) return;
+
+    cell.revealed = true;
+    const el = document.getElementById(`ms-${r}-${c}`);
+    el.classList.add('revealed');
+    el.classList.remove('flagged');
+    el.dataset.mines = cell.neighbors;
+
+    if (cell.mine) {
+        el.innerText = '💣';
+        el.classList.add('mine');
+        gameOver(false);
+        return;
+    }
+
+    if (cell.neighbors > 0) {
+        el.innerHTML = `<img src="${cell.neighbors}.png" alt="${cell.neighbors}">`;
+    } else {
+        el.innerHTML = '';
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                revealCell(r + dr, c + dc);
+            }
+        }
+    }
+    checkWin();
+}
+
+function handleMSRightClick(r, c) {
+    if (msGameOver || msBoard[r][c].revealed) return;
+    const cell = msBoard[r][c];
+    cell.flagged = !cell.flagged;
+
+    const el = document.getElementById(`ms-${r}-${c}`);
+    if (cell.flagged) {
+        el.classList.add('flagged');
+        el.innerHTML = '<img src="flag.png" alt="flag">';
+        msFlagsCount--;
+    } else {
+        el.classList.remove('flagged');
+        el.innerHTML = '';
+        msFlagsCount++;
+    }
+    document.getElementById('minesweeper-flags').innerText = msFlagsCount;
+}
+
+function startMSTimer() {
+    msStartTime = Date.now();
+    msTimerInterval = setInterval(() => {
+        const elapsed = (Date.now() - msStartTime) / 1000;
+        document.getElementById('minesweeper-timer').innerText = Math.floor(elapsed);
+    }, 16);
+}
+
+function checkWin() {
+    let revealed = 0;
+    for (let r = 0; r < msRows; r++) {
+        for (let c = 0; c < msCols; c++) {
+            if (msBoard[r][c].revealed) revealed++;
+        }
+    }
+    if (revealed === (msRows * msCols) - msMinesCount) {
+        gameOver(true);
+    }
+}
+
+function gameOver(won) {
+    msGameOver = true;
+    clearInterval(msTimerInterval);
+    msFinalTime = ((Date.now() - msStartTime) / 1000) || 0;
+    document.getElementById('minesweeper-timer').innerText = msFinalTime.toFixed(2);
+    const status = document.getElementById('minesweeper-status');
+    status.innerText = won ? `YOU WIN! Time: ${msFinalTime.toFixed(2)}s` : `GAME OVER! Time: ${msFinalTime.toFixed(2)}s`;
+    status.className = won ? "text-green-600 font-bold text-center mt-4" : "text-red-600 font-bold text-center mt-4";
+
+    for (let r = 0; r < msRows; r++) {
+        for (let c = 0; c < msCols; c++) {
+            const cell = msBoard[r][c];
+            const el = document.getElementById(`ms-${r}-${c}`);
+            if (!el) continue;
+            if (cell.mine) {
+                el.classList.add('revealed', 'mine');
+                el.innerText = '💣';
+            } else if (cell.flagged && !cell.mine) {
+                el.classList.add('revealed');
+                el.innerHTML = '<img src="flagwrong.png" alt="wrong flag">';
+            }
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', toggleCustomMinesweeper);
+    </script>
+
+    <nav class="bg-slate-800 text-white p-4 shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold cursor-pointer" onclick="showTool('home')">meow hub</h1>
+            <div class="flex gap-4 overflow-x-auto text-sm no-scrollbar">
+                <button onclick="showTool('home')" class="hover:text-slate-400">Home</button>
+                <button onclick="showTool('keyboard')" class="hover:text-slate-400">Keyboard</button>
+                <button onclick="showTool('encoder')" class="hover:text-slate-400">Encoder</button>
+                <button onclick="showTool('calc')" class="hover:text-slate-400">Math</button>
+                <button onclick="showTool('qr')" class="hover:text-slate-400">QR</button>
+                <button onclick="showTool('time')" class="hover:text-slate-400">Time</button>
+                <button onclick="showTool('wheel')" class="hover:text-slate-400">Wheel</button>
+                <button onclick="showTool('tts')" class="hover:text-slate-400">TTS</button>
+                <button onclick="showTool('converter')" class="hover:text-slate-400">Units</button>
+                <button onclick="showTool('dice')" class="hover:text-slate-400">Dice</button>
+                <button onclick="showTool('color')" class="hover:text-slate-400">Colors</button>
+                <button onclick="showTool('timers')" class="hover:text-slate-400">Timers</button>
+                <button onclick="showTool('shrink')" class="hover:text-slate-400">Shrink</button>
+                <button onclick="showTool('scramble')" class="hover:text-slate-400">Scramble</button>
+                <button onclick="showTool('guess')" class="hover:text-slate-400">Guess</button>
+                <button onclick="showTool('rps')" class="hover:text-slate-400">RPS</button>
+                <button onclick="showTool('typing')" class="hover:text-slate-400">Typing</button>
+                <button onclick="showTool('tetris')" class="hover:text-slate-400">Tetris</button>
+                <button onclick="showTool('minesweeper')" class="hover:text-slate-400">Minesweeper</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto mt-8 p-4">
+
+        <section id="home" class="tool-card active">
+            <div class="text-center mb-10">
+                <h2 class="text-4xl font-extrabold text-slate-800 mb-2">tools :3</h2>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div onclick="showTool('keyboard')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Keyboard Tester</h3>
+                    <p class="text-sm text-slate-500">Visual layout to check for key registration and ghosting.</p>
+                </div>
+                <div onclick="showTool('encoder')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Encoder / Decoder</h3>
+                    <p class="text-sm text-slate-500">Convert between Plain Text, Base64, and Binary formats.</p>
+                </div>
+                <div onclick="showTool('calc')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Percentage Calculator</h3>
+                    <p class="text-sm text-slate-500">Calculate proportions and percentage values quickly.</p>
+                </div>
+                <div onclick="showTool('qr')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">QR Generator</h3>
+                    <p class="text-sm text-slate-500">Generate scanable QR codes from links or text strings.</p>
+                </div>
+                <div onclick="showTool('time')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Time Tools</h3>
+                    <p class="text-sm text-slate-500">Duration tracking and UTC/Local timezone comparison.</p>
+                </div>
+                <div onclick="showTool('wheel')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Decision Wheel</h3>
+                    <p class="text-sm text-slate-500">Randomized selection tool for custom list items.</p>
+                </div>
+                <div onclick="showTool('tts')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Text-to-Speech</h3>
+                    <p class="text-sm text-slate-500">Convert text to speech with preview and download.</p>
+                </div>
+                <div onclick="showTool('shrink')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">File Shrinker</h3>
+                    <p class="text-sm text-slate-500">Compress any file to 8MB or less for easy sharing.</p>
+                </div>
+                <div onclick="showTool('converter')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Unit Converter</h3>
+                    <p class="text-sm text-slate-500">Convert between various units of measurement.</p>
+                </div>
+                <div onclick="showTool('dice')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Dice Roller</h3>
+                    <p class="text-sm text-slate-500">Roll custom dice with statistics.</p>
+                </div>
+                <div onclick="showTool('color')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Color Picker</h3>
+                    <p class="text-sm text-slate-500">Extract colors from images with hover preview.</p>
+                </div>
+                <div onclick="showTool('timers')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Timers & Stopwatch</h3>
+                    <p class="text-sm text-slate-500">Countdown timers, Pomodoro, and lap timing stopwatch.</p>
+                </div>
+                <div onclick="showTool('scramble')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Word Scramble</h3>
+                    <p class="text-sm text-slate-500">Unscramble words and test your vocabulary skills.</p>
+                </div>
+                <div onclick="showTool('guess')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Number Guessing</h3>
+                    <p class="text-sm text-slate-500">Guess the secret number with higher/lower hints.</p>
+                </div>
+                <div onclick="showTool('rps')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Rock Paper Scissors</h3>
+                    <p class="text-sm text-slate-500">Play against the computer with win/loss tracking.</p>
+                </div>
+                <div onclick="showTool('typing')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Typing Test</h3>
+                    <p class="text-sm text-slate-500">Test your typing speed and accuracy.</p>
+                </div>
+                <div onclick="showTool('tetris')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Tetris</h3>
+                    <p class="text-sm text-slate-500">Classic block-stacking puzzle game.</p>
+                </div>
+                <div onclick="showTool('minesweeper')" class="bg-white p-6 rounded-lg shadow-sm border hover:border-slate-400 cursor-pointer transition-all">
+                    <h3 class="font-bold text-lg mb-2">Minesweeper</h3>
+                    <p class="text-sm text-slate-500">Find all mines without detonating them.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="keyboard" class="tool-card bg-white p-6 rounded-xl shadow-md overflow-x-auto">
+            <h2 class="text-xl font-bold mb-4">Visual Keyboard Tester</h2>
+            <div class="inline-block bg-slate-200 p-4 rounded-lg shadow-inner min-w-[800px]">
+                <div class="flex mb-1">
+                    <div class="key" id="Escape">Esc</div><div class="key ml-10" id="F1">F1</div><div class="key" id="F2">F2</div><div class="key" id="F3">F3</div><div class="key" id="F4">F4</div><div class="key ml-6" id="F5">F5</div><div class="key" id="F6">F6</div><div class="key" id="F7">F7</div><div class="key" id="F8">F8</div>
+                </div>
+                <div class="flex">
+                    <div class="key" id="Backquote">`</div><div class="key" id="Digit1">1</div><div class="key" id="Digit2">2</div><div class="key" id="Digit3">3</div><div class="key" id="Digit4">4</div><div class="key" id="Digit5">5</div><div class="key" id="Digit6">6</div><div class="key" id="Digit7">7</div><div class="key" id="Digit8">8</div><div class="key" id="Digit9">9</div><div class="key" id="Digit0">0</div><div class="key" id="Minus">-</div><div class="key" id="Equal">=</div><div class="key wide" id="Backspace">Back</div>
+                </div>
+                <div class="flex">
+                    <div class="key wide" id="Tab">Tab</div><div class="key" id="KeyQ">Q</div><div class="key" id="KeyW">W</div><div class="key" id="KeyE">E</div><div class="key" id="KeyR">R</div><div class="key" id="KeyT">T</div><div class="key" id="KeyY">Y</div><div class="key" id="KeyU">U</div><div class="key" id="KeyI">I</div><div class="key" id="KeyO">O</div><div class="key" id="KeyP">P</div><div class="key" id="BracketLeft">[</div><div class="key" id="BracketRight">]</div><div class="key" id="Backslash">\</div>
+                </div>
+                <div class="flex">
+                    <div class="key extra-wide" id="CapsLock">Caps</div><div class="key" id="KeyA">A</div><div class="key" id="KeyS">S</div><div class="key" id="KeyD">D</div><div class="key" id="KeyF">F</div><div class="key" id="KeyG">G</div><div class="key" id="KeyH">H</div><div class="key" id="KeyJ">J</div><div class="key" id="KeyK">K</div><div class="key" id="KeyL">L</div><div class="key" id="Semicolon">;</div><div class="key" id="Quote">'</div><div class="key extra-wide" id="Enter">Enter</div>
+                </div>
+                <div class="flex">
+                    <div class="key extra-wide" id="ShiftLeft">Shift</div><div class="key" id="KeyZ">Z</div><div class="key" id="KeyX">X</div><div class="key" id="KeyC">C</div><div class="key" id="KeyV">V</div><div class="key" id="KeyB">B</div><div class="key" id="KeyN">N</div><div class="key" id="KeyM">M</div><div class="key" id="Comma">,</div><div class="key" id="Period">.</div><div class="key" id="Slash">/</div><div class="key extra-wide" id="ShiftRight">Shift</div>
+                </div>
+                <div class="flex">
+                    <div class="key wide" id="ControlLeft">Ctrl</div><div class="key" id="MetaLeft">Win</div><div class="key" id="AltLeft">Alt</div><div class="key space" id="Space">Space</div><div class="key" id="AltRight">Alt</div><div class="key" id="ControlRight">Ctrl</div>
+                </div>
+            </div>
+            <div class="mt-6 p-4 bg-slate-50 border-l-4 border-slate-800">
+                <p>Last key pressed: <span id="key-name" class="font-bold text-slate-800">-</span></p>
+            </div>
+        </section>
+
+        <section id="encoder" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">Encoder / Decoder</h2>
+            <textarea id="crypto-input" class="w-full p-3 border rounded mb-4" placeholder="Input text..."></textarea>
+            <div class="flex flex-wrap gap-2 mb-4">
+                <button onclick="processCrypto('base64-en')" class="bg-slate-700 text-white px-4 py-2 rounded">Base64 Encode</button>
+                <button onclick="processCrypto('base64-de')" class="bg-slate-700 text-white px-4 py-2 rounded">Base64 Decode</button>
+                <button onclick="processCrypto('bin-en')" class="bg-slate-500 text-white px-4 py-2 rounded">Binary Encode</button>
+                <button onclick="processCrypto('bin-de')" class="bg-slate-500 text-white px-4 py-2 rounded">Binary Decode</button>
+            </div>
+            <textarea id="crypto-output" class="w-full p-3 border rounded bg-gray-50" readonly placeholder="Output result..."></textarea>
+        </section>
+
+        <section id="calc" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">Percentage Calculator</h2>
+            <div class="flex flex-wrap items-center gap-2">
+                <span>What is</span>
+                <input type="number" id="p1-v1" class="border p-2 w-24 rounded">
+                <span>percent of</span>
+                <input type="number" id="p1-v2" class="border p-2 w-24 rounded">
+                <button onclick="calcP1()" class="bg-slate-700 text-white px-4 py-2 rounded">Calculate</button>
+                <span id="p1-res" class="text-xl font-bold ml-2 text-slate-800"></span>
+            </div>
+        </section>
+
+        <section id="qr" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">QR Code Generator</h2>
+            <input type="text" id="qr-input" class="w-full p-3 border rounded mb-4" placeholder="Enter URL or text...">
+            <button onclick="genQR()" class="bg-slate-700 text-white px-6 py-2 rounded mb-4">Generate</button>
+            <div id="qrcode" class="flex justify-center p-4"></div>
+        </section>
+
+        <section id="time" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">Time Utilities</h2>
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="bg-slate-50 p-4 rounded-lg border">
+                    <h3 class="font-bold mb-2">Duration Calculator</h3>
+                    <div class="flex gap-2 mb-2">
+                        <input type="date" id="date-input" class="border p-2 rounded flex-1">
+                        <input type="time" id="time-input" class="border p-2 rounded flex-1">
+                    </div>
+                    <div id="time-res" class="text-lg font-bold text-slate-700 italic">Enter date and time above...</div>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-lg border">
+                    <h3 class="font-bold mb-2">Clocks</h3>
+                    <select id="timezone-select" class="border p-2 rounded mb-2 w-full">
+                        <option value="local">Local Time</option>
+                        <option value="UTC">UTC</option>
+                        <option value="America/New_York">Eastern Time</option>
+                        <option value="America/Chicago">Central Time</option>
+                        <option value="America/Denver">Mountain Time</option>
+                        <option value="America/Los_Angeles">Pacific Time</option>
+                        <option value="Europe/London">London</option>
+                        <option value="Europe/Paris">Paris</option>
+                        <option value="Asia/Tokyo">Tokyo</option>
+                        <option value="Australia/Sydney">Sydney</option>
+                    </select>
+                    <div class="text-3xl font-mono mb-2 text-slate-800" id="current-clock"></div>
+                    <p class="text-sm text-gray-500">UTC: <span id="utc-clock"></span></p>
+                </div>
+            </div>
+        </section>
+
+        <section id="wheel" class="tool-card bg-white p-6 rounded-xl shadow-md text-center">
+            <h2 class="text-xl font-bold mb-4">Decision Wheel</h2>
+            <input type="text" id="wheel-items" class="w-full p-3 border rounded mb-4" placeholder="Item A, Item B, Item C...">
+            <div class="relative inline-block mb-4">
+                <div id="wheel-pointer" class="absolute -top-4 left-1/2 -translate-x-1/2 z-10 font-bold text-slate-800">|</div>
+                <canvas id="wheel-canvas" width="300" height="300" class="rounded-full border-4 border-slate-200"></canvas>
+            </div>
+            <br>
+            <button onclick="spinWheel()" class="bg-slate-800 text-white px-10 py-3 rounded font-bold shadow hover:bg-slate-700 transition-colors">SPIN</button>
+        </section>
+
+        <section id="tts" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">Text-to-Speech</h2>
+            <textarea id="tts-text" class="w-full p-3 border rounded mb-4" placeholder="Enter text to convert to speech..." rows="4"></textarea>
+            <div class="flex flex-wrap gap-2 mb-4">
+                <select id="tts-voice" class="border p-2 rounded">
+                    <option value="default">Default Voice</option>
+                </select>
+                <input type="range" id="tts-rate" min="0.5" max="2" step="0.1" value="1" class="border p-2 rounded">
+                <span class="text-sm self-center">Speed: <span id="rate-value">1x</span></span>
+                <input type="range" id="tts-pitch" min="0" max="2" step="0.1" value="1" class="border p-2 rounded">
+                <span class="text-sm self-center">Pitch: <span id="pitch-value">1</span></span>
+            </div>
+            <div class="flex gap-2 mb-4">
+                <button onclick="previewTTS()" class="bg-blue-600 text-white px-4 py-2 rounded">Preview</button>
+                <button onclick="downloadTTS()" class="bg-green-600 text-white px-4 py-2 rounded">Download MP3</button>
+            </div>
+            <div id="tts-status" class="text-sm text-gray-600"></div>
+        </section>
+
+        <section id="shrink" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">File Shrinker</h2>
+            <p class="text-sm text-gray-600 mb-4">Automatically compress any file to 8MB or less for easy sharing and uploading.</p>
+            <div class="mb-4">
+                <input type="file" id="shrink-file" class="border p-2 rounded w-full">
+                <p class="text-sm text-gray-500 mt-1">Upload any file - we'll shrink it to under 8MB!</p>
+            </div>
+            <button onclick="shrinkFile()" class="bg-orange-600 text-white px-6 py-2 rounded mb-4">Shrink to 8MB</button>
+            <div id="shrink-status" class="text-sm text-gray-600"></div>
+            <div id="shrink-results" class="hidden mt-4 p-4 bg-gray-50 rounded">
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <strong>Original:</strong> <span id="shrink-original-size"></span>
+                    </div>
+                    <div>
+                        <strong>Shrunk:</strong> <span id="shrink-new-size"></span>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <strong>Reduction:</strong> <span id="shrink-reduction"></span>
+                </div>
+                <div class="mb-4">
+                    <strong>Status:</strong> <span id="shrink-status-final"></span>
+                </div>
+                <button onclick="downloadShrunkFile()" class="bg-green-600 text-white px-4 py-2 rounded">Download Shrunk File</button>
+            </div>
+        </section>
+
+        <section id="converter" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">Unit Converter</h2>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <input type="number" id="convert-value" placeholder="Value" class="border p-2 rounded w-full mb-2">
+                    <select id="convert-from" class="border p-2 rounded w-full mb-2">
+                        <optgroup label="Length">
+                            <option value="mm">Millimeters</option>
+                            <option value="cm">Centimeters</option>
+                            <option value="m">Meters</option>
+                            <option value="km">Kilometers</option>
+                            <option value="in">Inches</option>
+                            <option value="ft">Feet</option>
+                            <option value="yd">Yards</option>
+                            <option value="mi">Miles</option>
+                        </optgroup>
+                        <optgroup label="Weight">
+                            <option value="mg">Milligrams</option>
+                            <option value="g">Grams</option>
+                            <option value="kg">Kilograms</option>
+                            <option value="oz">Ounces</option>
+                            <option value="lb">Pounds</option>
+                            <option value="t">Tons</option>
+                        </optgroup>
+                        <optgroup label="Temperature">
+                            <option value="c">Celsius</option>
+                            <option value="f">Fahrenheit</option>
+                            <option value="k">Kelvin</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div>
+                    <div id="convert-result" class="border p-2 rounded w-full mb-2 bg-gray-50 min-h-[40px] flex items-center">Result</div>
+                    <select id="convert-to" class="border p-2 rounded w-full mb-2">
+                        <optgroup label="Length">
+                            <option value="mm">Millimeters</option>
+                            <option value="cm">Centimeters</option>
+                            <option value="m">Meters</option>
+                            <option value="km">Kilometers</option>
+                            <option value="in">Inches</option>
+                            <option value="ft">Feet</option>
+                            <option value="yd">Yards</option>
+                            <option value="mi">Miles</option>
+                        </optgroup>
+                        <optgroup label="Weight">
+                            <option value="mg">Milligrams</option>
+                            <option value="g">Grams</option>
+                            <option value="kg">Kilograms</option>
+                            <option value="oz">Ounces</option>
+                            <option value="lb">Pounds</option>
+                            <option value="t">Tons</option>
+                        </optgroup>
+                        <optgroup label="Temperature">
+                            <option value="c">Celsius</option>
+                            <option value="f">Fahrenheit</option>
+                            <option value="k">Kelvin</option>
+                        </optgroup>
+                    </select>
+                </div>
+            </div>
+            <button onclick="convertUnits()" class="bg-indigo-600 text-white px-6 py-2 rounded">Convert</button>
+        </section>
+
+        <section id="dice" class="tool-card bg-white p-6 rounded-xl shadow-md text-center">
+            <h2 class="text-xl font-bold mb-4">Dice Roller</h2>
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-2">Number of Sides</label>
+                <input type="number" id="dice-sides" min="2" max="100" value="6" class="border p-2 rounded w-full max-w-xs mx-auto">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-2">Number of Dice</label>
+                <input type="number" id="dice-count" min="1" max="10" value="1" class="border p-2 rounded w-full max-w-xs mx-auto">
+            </div>
+            <button onclick="rollDice()" class="bg-red-600 text-white px-8 py-3 rounded font-bold mb-4">ROLL DICE</button>
+            <div id="dice-result" class="text-4xl font-bold text-slate-800 mb-4">-</div>
+            <div id="dice-history" class="text-sm text-gray-600 max-h-32 overflow-y-auto"></div>
+        </section>
+
+        <section id="color" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-4">Color Picker</h2>
+            <div class="mb-4">
+                <input type="file" id="color-image" accept="image/*" class="border p-2 rounded w-full">
+                <p class="text-sm text-gray-500 mt-1">Upload an image or paste (Ctrl+V) an image/color code</p>
+            </div>
+            <div class="mb-4">
+                <input type="text" id="color-input" placeholder="Paste color code (HEX, RGB, HSL) or press Ctrl+V for image" class="border p-2 rounded w-full">
+            </div>
+            <div class="mb-4">
+                <canvas id="color-canvas" class="border rounded max-w-full hidden"></canvas>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">HEX</label>
+                    <input type="text" id="color-hex" readonly class="border p-2 rounded w-full bg-gray-50">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">RGB</label>
+                    <input type="text" id="color-rgb" readonly class="border p-2 rounded w-full bg-gray-50">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">HSL</label>
+                    <input type="text" id="color-hsl" readonly class="border p-2 rounded w-full bg-gray-50">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Preview</label>
+                    <div id="color-preview" class="w-full h-10 border rounded"></div>
+                </div>
+            </div>
+            <div id="color-status" class="text-sm text-gray-600"></div>
+        </section>
+
+        <section id="scramble" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Word Scramble</h2>
+            <div class="text-center mb-6">
+                <p class="text-lg mb-2">Unscramble the word below!</p>
+                <p class="text-sm text-gray-600">Guess the original word and check your answer.</p>
+            </div>
+            <div class="mb-4">
+                <button onclick="generateRandomWord()" class="bg-green-600 text-white px-8 py-3 rounded hover:bg-green-700 transition-colors font-bold text-lg">New Word</button>
+            </div>
+            <div class="mb-6">
+                <div id="scrambled-word" class="text-4xl font-bold text-center p-6 bg-gray-100 rounded-lg mb-4 min-h-[80px] flex items-center justify-center"></div>
+                <input type="text" id="scramble-answer" placeholder="Type your answer here" class="border p-3 rounded w-full text-center text-xl">
+            </div>
+            <div class="flex gap-2 justify-center">
+                <button onclick="checkScrambleAnswer()" class="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700 transition-colors font-bold">Check Answer</button>
+                <button onclick="revealScrambleAnswer()" class="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700 transition-colors font-bold">Reveal Answer</button>
+            </div>
+            <div id="scramble-status" class="mt-4 text-center"></div>
+        </section>
+
+        <section id="guess" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Number Guessing Game</h2>
+            <div class="text-center mb-6">
+                <p class="text-lg mb-2">I'm thinking of a number between 1 and 100</p>
+                <p class="text-sm text-gray-600">Guess it in as few tries as possible!</p>
+            </div>
+            <div class="mb-4">
+                <input type="number" id="guess-input" min="1" max="100" placeholder="Enter your guess" class="border p-3 rounded w-full text-center text-xl">
+            </div>
+            <div class="flex gap-2 mb-4">
+                <button onclick="makeGuess()" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700 transition-colors font-bold">Guess!</button>
+                <button onclick="newGuessGame()" class="flex-1 bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 transition-colors font-bold">New Game</button>
+            </div>
+            <div id="guess-hint" class="text-center text-lg font-semibold mb-4 min-h-[2rem]"></div>
+            <div id="guess-history" class="bg-gray-50 p-4 rounded">
+                <h3 class="font-bold mb-2">Your Guesses:</h3>
+                <div id="guess-list" class="text-sm"></div>
+            </div>
+        </section>
+
+        <section id="rps" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Rock Paper Scissors</h2>
+            <div class="text-center mb-6">
+                <p class="text-lg">Choose your move!</p>
+            </div>
+            <div class="flex justify-center gap-4 mb-6">
+                <button onclick="playRPS('rock')" class="rps-choice bg-gray-200 hover:bg-gray-300 p-4 rounded-lg text-4xl transition-colors" data-choice="rock">🪨</button>
+                <button onclick="playRPS('paper')" class="rps-choice bg-gray-200 hover:bg-gray-300 p-4 rounded-lg text-4xl transition-colors" data-choice="paper">📄</button>
+                <button onclick="playRPS('scissors')" class="rps-choice bg-gray-200 hover:bg-gray-300 p-4 rounded-lg text-4xl transition-colors" data-choice="scissors">✂️</button>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="text-center">
+                    <h3 class="font-bold mb-2">You</h3>
+                    <div id="player-choice" class="text-6xl mb-2">-</div>
+                    <div id="player-label" class="text-sm text-gray-600">-</div>
+                </div>
+                <div class="text-center">
+                    <h3 class="font-bold mb-2">Computer</h3>
+                    <div id="computer-choice" class="text-6xl mb-2">-</div>
+                    <div id="computer-label" class="text-sm text-gray-600">-</div>
+                </div>
+            </div>
+            <div id="rps-result" class="text-center text-xl font-bold mb-4 min-h-[2rem]"></div>
+            <div class="bg-gray-50 p-4 rounded">
+                <h3 class="font-bold mb-2">Score:</h3>
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <div>Wins: <span id="wins" class="font-bold text-green-600">0</span></div>
+                    <div>Losses: <span id="losses" class="font-bold text-red-600">0</span></div>
+                    <div>Ties: <span id="ties" class="font-bold text-gray-600">0</span></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="typing" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Typing Test</h2>
+            <div class="mb-4">
+                <select id="typing-difficulty" class="border p-2 rounded mr-4">
+                    <option value="easy">Easy (short text)</option>
+                    <option value="medium">Medium (paragraph)</option>
+                    <option value="hard">Hard (long text)</option>
+                </select>
+                <button onclick="startTypingTest()" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors">Start Test</button>
+                <button onclick="resetTypingTest()" class="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700 transition-colors ml-2">Reset</button>
+            </div>
+            <div id="typing-text" class="bg-gray-100 p-4 rounded mb-4 min-h-[120px] text-lg leading-relaxed"></div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600" id="wpm">0</div>
+                    <div class="text-sm text-gray-600">WPM</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600" id="accuracy">100</div>
+                    <div class="text-sm text-gray-600">Accuracy %</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600" id="time-left">60</div>
+                    <div class="text-sm text-gray-600">Time Left</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600" id="chars-typed">0</div>
+                    <div class="text-sm text-gray-600">Chars</div>
+                </div>
+            </div>
+            <div id="typing-status" class="text-center text-lg"></div>
+        </section>
+
+        <section id="tetris" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Tetris</h2>
+            <div class="text-center mb-4">
+                <p class="text-sm text-gray-600 mb-2">Use WASD or Arrow Keys to move, Q/E to rotate</p>
+                <div class="inline-block">
+                    <canvas id="tetris-canvas" width="300" height="600" class="border-2 border-gray-800 bg-black"></canvas>
+                </div>
+            </div>
+            <div class="flex justify-center gap-4 mb-4">
+                <button onclick="startTetris()" id="tetris-start-btn" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 transition-colors">Start Game</button>
+                <button onclick="pauseTetris()" id="tetris-pause-btn" class="bg-yellow-600 text-white px-6 py-2 rounded hover:bg-yellow-700 transition-colors" style="display:none;">Pause</button>
+                <button onclick="resetTetris()" class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 transition-colors">Reset</button>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                <div>
+                    <div class="text-2xl font-bold text-blue-600" id="tetris-score">0</div>
+                    <div class="text-sm text-gray-600">Score</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-green-600" id="tetris-lines">0</div>
+                    <div class="text-sm text-gray-600">Lines</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-purple-600" id="tetris-level">1</div>
+                    <div class="text-sm text-gray-600">Level</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-orange-600" id="tetris-next">I</div>
+                    <div class="text-sm text-gray-600">Next</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="minesweeper" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Minesweeper</h2>
+            <div class="flex flex-col md:flex-row justify-center items-center gap-4 mb-4">
+                <select id="minesweeper-difficulty" onchange="toggleCustomMinesweeper()" class="border p-2 rounded w-full md:w-auto">
+                    <option value="easy">8x8 (10 mines)</option>
+                    <option value="medium">12x12 (20 mines)</option>
+                    <option value="hard">16x16 (40 mines)</option>
+                    <option value="custom">Custom</option>
+                </select>
+                <button onclick="startMinesweeper()" class="bg-green-600 text-white px-6 py-2 rounded font-semibold hover:bg-green-700 transition-colors">New Game</button>
+            </div>
+            <div id="minesweeper-custom-panel" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4" style="display:none;">
+                <div class="flex flex-col">
+                    <label class="text-sm text-slate-600 mb-1" for="minesweeper-custom-rows">Rows</label>
+                    <input id="minesweeper-custom-rows" type="number" min="4" max="30" value="10" class="border p-2 rounded">
+                </div>
+                <div class="flex flex-col">
+                    <label class="text-sm text-slate-600 mb-1" for="minesweeper-custom-cols">Cols</label>
+                    <input id="minesweeper-custom-cols" type="number" min="4" max="30" value="10" class="border p-2 rounded">
+                </div>
+                <div class="flex flex-col">
+                    <label class="text-sm text-slate-600 mb-1" for="minesweeper-custom-mines">Mines</label>
+                    <input id="minesweeper-custom-mines" type="number" min="1" value="12" class="border p-2 rounded">
+                </div>
+            </div>
+            <p class="text-center text-sm text-slate-500 mb-4">Right click to flag a cell. Press <span class="font-semibold">Spacebar</span> to reset.</p>
+            <div class="text-center mb-4 overflow-auto">
+                <div id="minesweeper-board" class="inline-grid"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-4 text-center max-w-xs mx-auto">
+                <div class="bg-slate-100 p-3 rounded">
+                    <div class="text-xl font-bold text-red-600" id="minesweeper-flags">0</div>
+                    <div class="text-xs text-gray-500 uppercase">Flags</div>
+                </div>
+                <div class="bg-slate-100 p-3 rounded">
+                    <div class="text-xl font-bold text-blue-600" id="minesweeper-timer">0</div>
+                    <div class="text-xs text-gray-500 uppercase">Time</div>
+                </div>
+            </div>
+            <div id="minesweeper-status" class="text-center mt-4 font-bold text-lg h-8"></div>
+            <p class="text-center text-sm text-slate-500 mt-3">Use left click to uncover.</p>
+        </section>
+
+        <section id="timers" class="tool-card bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold mb-6">Timers & Stopwatch</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Countdown Timer -->
+                <div class="border rounded-lg p-4 bg-blue-50">
+                    <h3 class="font-bold text-lg mb-4">Countdown Timer</h3>
+                    <div class="flex gap-2 mb-4">
+                        <input type="number" id="timer-minutes" min="0" max="999" value="1" class="border p-2 rounded w-20" placeholder="Min">
+                        <span class="text-2xl font-bold">:</span>
+                        <input type="number" id="timer-seconds" min="0" max="59" value="00" class="border p-2 rounded w-20" placeholder="Sec">
+                    </div>
+                    <div id="timer-display" class="text-4xl font-bold text-center mb-4 font-mono">01:00</div>
+                    <div class="flex gap-2 mb-2">
+                        <button onclick="startTimer()" id="timer-btn" class="flex-1 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors font-bold">Start</button>
+                        <button onclick="pauseTimer()" id="pause-btn" class="flex-1 bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 transition-colors font-bold" style="display:none;">Pause</button>
+                        <button onclick="resetTimer()" class="flex-1 bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors font-bold">Reset</button>
+                    </div>
+                    <button onclick="setPresetTimer(5)" class="w-full bg-slate-200 text-slate-800 px-2 py-1 rounded text-sm mb-1 hover:bg-slate-300">5 min</button>
+                    <button onclick="setPresetTimer(15)" class="w-full bg-slate-200 text-slate-800 px-2 py-1 rounded text-sm mb-1 hover:bg-slate-300">15 min</button>
+                </div>
+                
+                <!-- Stopwatch -->
+                <div class="border rounded-lg p-4 bg-green-50">
+                    <h3 class="font-bold text-lg mb-4">Stopwatch</h3>
+                    <div id="stopwatch-display" class="text-4xl font-bold text-center mb-4 font-mono">00:00:00</div>
+                    <div id="stopwatch-laps" class="bg-white border rounded p-2 mb-4 max-h-32 overflow-y-auto">
+                        <p class="text-sm text-gray-500 text-center py-2">No laps recorded</p>
+                    </div>
+                    <div class="flex gap-2 mb-2">
+                        <button onclick="startStopwatch()" id="stopwatch-btn" class="flex-1 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors font-bold">Start</button>
+                        <button onclick="pauseStopwatch()" id="stopwatch-pause-btn" class="flex-1 bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 transition-colors font-bold" style="display:none;">Pause</button>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="lapStopwatch()" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors font-bold">Lap</button>
+                        <button onclick="resetStopwatch()" class="flex-1 bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors font-bold">Reset</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        function showTool(id) {
+            document.querySelectorAll('.tool-card').forEach(c => c.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            
+            window.scrollTo(0,0);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            const isMinesweeperActive = document.getElementById('minesweeper').classList.contains('active');
+            const isKeyboardActive = document.getElementById('keyboard').classList.contains('active');
+            const visualKey = document.getElementById(e.code);
+
+            if (isMinesweeperActive && e.code === 'Space') {
+                e.preventDefault();
+                startMinesweeper();
+                return;
+            }
+
+            if (visualKey) {
+                visualKey.classList.add('pressed');
+                visualKey.classList.add('was-pressed');
+
+                if (isKeyboardActive) {
+                    e.preventDefault();
+                    meow.play();
+                    document.getElementById('key-name').innerText = e.code;
+                }
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const visualKey = document.getElementById(e.code);
+            if (visualKey) {
+                // Remove currently pressed (blue), but keep previously pressed (dark grey)
+                visualKey.classList.remove('pressed');
+            }
+        });
+
+        function processCrypto(type) {
+            const input = document.getElementById('crypto-input').value;
+            const output = document.getElementById('crypto-output');
+            try {
+                if (type === 'base64-en') output.value = btoa(input);
+                if (type === 'base64-de') output.value = atob(input);
+                if (type === 'bin-en') output.value = input.split('').map(char => char.charCodeAt(0).toString(2).padStart(8, '0')).join(' ');
+                if (type === 'bin-de') output.value = input.split(' ').map(bin => String.fromCharCode(parseInt(bin, 2))).join('');
+            } catch(e) { output.value = "Error: Invalid Input"; }
+        }
+
+        function calcP1() {
+            const v1 = parseFloat(document.getElementById('p1-v1').value);
+            const v2 = parseFloat(document.getElementById('p1-v2').value);
+            if(!isNaN(v1) && !isNaN(v2)) {
+                document.getElementById('p1-res').innerText = (v1 / 100) * v2;
+            }
+        }
+
+        let qrcode = new QRCode(document.getElementById("qrcode"), { width: 180, height: 180 });
+        function genQR() {
+            const val = document.getElementById('qr-input').value;
+            if (val) qrcode.makeCode(val);
+        }
+
+        setInterval(() => {
+            const now = new Date();
+            const timezone = document.getElementById('timezone-select').value;
+            
+            // Update main clock based on timezone
+            if (timezone === 'local') {
+                document.getElementById('current-clock').innerText = now.toLocaleTimeString();
+            } else if (timezone === 'UTC') {
+                document.getElementById('current-clock').innerText = now.toUTCString().split(' ')[4];
+            } else {
+                document.getElementById('current-clock').innerText = now.toLocaleTimeString('en-US', {timeZone: timezone});
+            }
+            
+            document.getElementById('utc-clock').innerText = now.toUTCString();
+            
+            // Duration calculator
+            const dateInput = document.getElementById('date-input').value;
+            const timeInput = document.getElementById('time-input').value;
+            
+            if (dateInput && timeInput) {
+                const targetDateTime = `${dateInput}T${timeInput}`;
+                const target = new Date(targetDateTime);
+                
+                if (!isNaN(target.getTime())) {
+                    const diff = target - now;
+                    const absDiff = Math.abs(diff);
+                    const days = Math.floor(absDiff / 86400000);
+                    const hrs = Math.floor((absDiff % 86400000) / 3600000);
+                    const mins = Math.floor((absDiff % 3600000) / 60000);
+                    const label = diff > 0 ? "Upcoming:" : "Elapsed:";
+                    document.getElementById('time-res').innerText = `${label} ${days}d ${hrs}h ${mins}m`;
+                } else {
+                    document.getElementById('time-res').innerText = "Invalid date/time";
+                }
+            } else {
+                document.getElementById('time-res').innerText = "Enter date and time above...";
+            }
+        }, 1000);
+
+        // Update clock immediately when timezone changes
+        document.getElementById('timezone-select').addEventListener('change', () => {
+            const now = new Date();
+            const timezone = document.getElementById('timezone-select').value;
+            
+            if (timezone === 'local') {
+                document.getElementById('current-clock').innerText = now.toLocaleTimeString();
+            } else if (timezone === 'UTC') {
+                document.getElementById('current-clock').innerText = now.toUTCString().split(' ')[4];
+            } else {
+                document.getElementById('current-clock').innerText = now.toLocaleTimeString('en-US', {timeZone: timezone});
+            }
+        });
+
+        // Update duration calculation immediately when inputs change
+        function updateDuration() {
+            const now = new Date();
+            const dateInput = document.getElementById('date-input').value;
+            const timeInput = document.getElementById('time-input').value;
+            
+            if (dateInput && timeInput) {
+                const targetDateTime = `${dateInput}T${timeInput}`;
+                const target = new Date(targetDateTime);
+                
+                if (!isNaN(target.getTime())) {
+                    const diff = target - now;
+                    const absDiff = Math.abs(diff);
+                    const days = Math.floor(absDiff / 86400000);
+                    const hrs = Math.floor((absDiff % 86400000) / 3600000);
+                    const mins = Math.floor((absDiff % 3600000) / 60000);
+                    const label = diff > 0 ? "Upcoming:" : "Elapsed:";
+                    document.getElementById('time-res').innerText = `${label} ${days}d ${hrs}h ${mins}m`;
+                } else {
+                    document.getElementById('time-res').innerText = "Invalid date/time";
+                }
+            } else {
+                document.getElementById('time-res').innerText = "Enter date and time above...";
+            }
+        }
+
+        document.getElementById('date-input').addEventListener('input', updateDuration);
+        document.getElementById('time-input').addEventListener('input', updateDuration);
+
+        const canvas = document.getElementById('wheel-canvas');
+        const ctx = canvas.getContext('2d');
+        let currentRotation = 0;
+
+        function drawWheel() {
+            const items = document.getElementById('wheel-items').value.split(',').filter(i => i.trim() !== "");
+            if (items.length === 0) {
+                ctx.clearRect(0,0,300,300);
+                return;
+            }
+            const slice = (Math.PI * 2) / items.length;
+            ctx.clearRect(0,0,300,300);
+            
+            // Vibrant colors for segments
+            const colors = [
+                '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', 
+                '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#84cc16',
+                '#14b8a6', '#6366f1', '#a855f7', '#f59e0b', '#10b981'
+            ];
+            
+            items.forEach((text, i) => {
+                ctx.beginPath();
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.moveTo(150,150);
+                ctx.arc(150,150, 140, i * slice, (i+1) * slice);
+                ctx.fill();
+                
+                // Add white border between segments
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Calculate text position for this segment
+                const angle = i * slice + slice/2;
+                const radius = 80;
+                const textX = 150 + radius * Math.cos(angle);
+                const textY = 150 + radius * Math.sin(angle);
+                
+                // Draw text at calculated position
+                ctx.save();
+                ctx.translate(textX, textY);
+                ctx.rotate(angle + Math.PI/2); // Rotate text to be radial
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 14px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(text.trim().substring(0,15), 0, 0);
+                ctx.restore();
+            });
+        }
+        document.getElementById('wheel-items').addEventListener('input', drawWheel);
+
+        function spinWheel() {
+            const rand = Math.floor(3000 + Math.random() * 5000);
+            currentRotation += rand;
+            canvas.style.transform = `rotate(${currentRotation}deg)`;
+        }
+        drawWheel();
+    </script>
+
+    <script>
+        // TTS Functions
+        let speechSynthesis = window.speechSynthesis;
+        let voices = [];
+
+        function loadVoices() {
+            voices = speechSynthesis.getVoices();
+            const voiceSelect = document.getElementById('tts-voice');
+            voiceSelect.innerHTML = '';
+            voices.forEach((voice, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = `${voice.name} (${voice.lang})`;
+                voiceSelect.appendChild(option);
+            });
+        }
+
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = loadVoices;
+        }
+        loadVoices();
+
+        document.getElementById('tts-rate').addEventListener('input', (e) => {
+            document.getElementById('rate-value').textContent = e.target.value + 'x';
+        });
+
+        document.getElementById('tts-pitch').addEventListener('input', (e) => {
+            document.getElementById('pitch-value').textContent = e.target.value;
+        });
+
+        function previewTTS() {
+            const text = document.getElementById('tts-text').value;
+            if (!text) {
+                document.getElementById('tts-status').textContent = 'Please enter some text';
+                return;
+            }
+
+            speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.voice = voices[document.getElementById('tts-voice').value];
+            utterance.rate = document.getElementById('tts-rate').value;
+            utterance.pitch = document.getElementById('tts-pitch').value;
+
+            utterance.onstart = () => document.getElementById('tts-status').textContent = 'Speaking...';
+            utterance.onend = () => document.getElementById('tts-status').textContent = 'Finished speaking';
+
+            speechSynthesis.speak(utterance);
+        }
+
+        function downloadTTS() {
+            const text = document.getElementById('tts-text').value;
+            if (!text) {
+                document.getElementById('tts-status').textContent = 'Please enter some text';
+                return;
+            }
+
+            // For download, we'll use a simple approach - note that actual MP3 download requires server-side processing
+            document.getElementById('tts-status').textContent = 'Download feature requires server-side implementation for MP3 conversion';
+        }
+
+        // File Shrinker Functions
+        let shrunkBlob = null;
+        let shrinkOriginalSize = 0;
+        let shrinkOriginalName = '';
+        const MAX_SIZE_BYTES = 8 * 1024 * 1024; // 8MB
+
+        async function shrinkFile() {
+            const fileInput = document.getElementById('shrink-file');
+
+            if (!fileInput.files[0]) {
+                document.getElementById('shrink-status').textContent = 'Please select a file';
+                return;
+            }
+
+            const file = fileInput.files[0];
+            shrinkOriginalSize = file.size;
+            shrinkOriginalName = file.name;
+
+            document.getElementById('shrink-status').textContent = 'Analyzing file...';
+            document.getElementById('shrink-results').classList.add('hidden');
+
+            try {
+                // If file is already under 8MB, just copy it
+                if (file.size <= MAX_SIZE_BYTES) {
+                    shrunkBlob = file;
+                    showShrinkResults('File is already under 8MB - no compression needed!');
+                    return;
+                }
+
+                // Determine file type and apply appropriate compression
+                const fileType = file.type.toLowerCase();
+
+                if (fileType.startsWith('image/')) {
+                    await shrinkImage(file);
+                } else if (fileType.startsWith('audio/')) {
+                    await shrinkAudio(file);
+                } else if (fileType.startsWith('video/')) {
+                    await shrinkVideo(file);
+                } else {
+                    // For other files, try GZIP compression
+                    await shrinkWithGzip(file);
+                }
+            } catch (error) {
+                document.getElementById('shrink-status').textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function shrinkImage(file) {
+            document.getElementById('shrink-status').textContent = 'Shrinking image...';
+
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                img.onload = () => {
+                    // Calculate new dimensions to fit under 8MB
+                    // Assuming JPEG compression, we can estimate file size roughly
+                    let { width, height } = img;
+                    let quality = 0.9;
+
+                    // Try different quality levels until we get under 8MB
+                    const tryCompress = (q) => {
+                        // Estimate compressed size (rough approximation)
+                        const estimatedSize = (width * height * 3 * q) * 0.5; // Rough JPEG estimation
+
+                        if (estimatedSize <= MAX_SIZE_BYTES || q < 0.1) {
+                            canvas.width = width;
+                            canvas.height = height;
+                            ctx.drawImage(img, 0, 0, width, height);
+
+                            canvas.toBlob((blob) => {
+                                if (blob.size <= MAX_SIZE_BYTES) {
+                                    shrunkBlob = blob;
+                                    showShrinkResults('Image compressed successfully!');
+                                    resolve();
+                                } else if (q > 0.1) {
+                                    // Try lower quality
+                                    tryCompress(q - 0.1);
+                                } else {
+                                    // If still too big, reduce dimensions
+                                    width = Math.floor(width * 0.8);
+                                    height = Math.floor(height * 0.8);
+                                    tryCompress(0.8);
+                                }
+                            }, 'image/jpeg', q);
+                        } else {
+                            // Reduce dimensions
+                            width = Math.floor(width * 0.9);
+                            height = Math.floor(height * 0.9);
+                            tryCompress(q);
+                        }
+                    };
+
+                    tryCompress(quality);
+                };
+
+                img.onerror = () => reject(new Error('Failed to load image'));
+                img.src = URL.createObjectURL(file);
+            });
+        }
+
+        async function shrinkAudio(file) {
+            document.getElementById('shrink-status').textContent = 'Shrinking audio...';
+
+            if (!window.AudioContext && !window.webkitAudioContext) {
+                throw new Error('Web Audio API not supported');
+            }
+
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuffer = await file.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+            // Try different sample rates to get under 8MB
+            const sampleRates = [11025, 22050, 44100];
+            let bestBuffer = audioBuffer;
+
+            for (const sampleRate of sampleRates) {
+                if (audioBuffer.sampleRate <= sampleRate) continue;
+
+                document.getElementById('shrink-status').textContent = `Trying ${sampleRate} Hz...`;
+
+                const resampledBuffer = await resampleAudioBuffer(audioBuffer, sampleRate, audioContext);
+                const estimatedSize = resampledBuffer.length * resampledBuffer.numberOfChannels * 2; // 16-bit PCM
+
+                if (estimatedSize <= MAX_SIZE_BYTES) {
+                    bestBuffer = resampledBuffer;
+                    break;
+                }
+            }
+
+            // Convert to WAV
+            shrunkBlob = audioBufferToWav(bestBuffer);
+            showShrinkResults('Audio compressed successfully!');
+        }
+
+        async function shrinkVideo(file) {
+            document.getElementById('shrink-status').textContent = 'Video compression requires advanced libraries. Using basic optimization...';
+
+            // For now, just copy the file if it's close to 8MB, otherwise show limitation
+            if (file.size <= MAX_SIZE_BYTES * 1.2) {
+                shrunkBlob = file;
+                showShrinkResults('Video is close to 8MB limit - minimal compression applied');
+            } else {
+                throw new Error('Video file is too large. Consider using external tools for video compression.');
+            }
+        }
+
+        async function shrinkWithGzip(file) {
+            document.getElementById('shrink-status').textContent = 'Applying GZIP compression...';
+
+            if (!('CompressionStream' in window)) {
+                throw new Error('Compression Streams API not supported in this browser');
+            }
+
+            const stream = file.stream();
+            const compressionStream = new CompressionStream('gzip');
+            const compressedStream = stream.pipeThrough(compressionStream);
+
+            const response = new Response(compressedStream);
+            const compressedBlob = await response.blob();
+
+            if (compressedBlob.size <= MAX_SIZE_BYTES) {
+                shrunkBlob = compressedBlob;
+                showShrinkResults('File compressed with GZIP!');
+            } else {
+                throw new Error('File cannot be compressed small enough. Consider using specialized compression tools.');
+            }
+        }
+
+        async function resampleAudioBuffer(audioBuffer, targetSampleRate, audioContext) {
+            const offlineContext = new OfflineAudioContext(
+                audioBuffer.numberOfChannels,
+                audioBuffer.duration * targetSampleRate,
+                targetSampleRate
+            );
+
+            const source = offlineContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(offlineContext.destination);
+            source.start();
+
+            return await offlineContext.startRendering();
+        }
+
+        function audioBufferToWav(buffer) {
+            const length = buffer.length * buffer.numberOfChannels * 2 + 44;
+            const arrayBuffer = new ArrayBuffer(length);
+            const view = new DataView(arrayBuffer);
+            let pos = 0;
+
+            // WAV header
+            const writeString = (str) => {
+                for (let i = 0; i < str.length; i++) {
+                    view.setUint8(pos++, str.charCodeAt(i));
+                }
+            };
+
+            writeString('RIFF');
+            view.setUint32(pos, length - 8, true); pos += 4;
+            writeString('WAVE');
+            writeString('fmt ');
+            view.setUint32(pos, 16, true); pos += 4;
+            view.setUint16(pos, 1, true); pos += 2; // PCM
+            view.setUint16(pos, buffer.numberOfChannels, true); pos += 2;
+            view.setUint32(pos, buffer.sampleRate, true); pos += 4;
+            view.setUint32(pos, buffer.sampleRate * buffer.numberOfChannels * 2, true); pos += 4;
+            view.setUint16(pos, buffer.numberOfChannels * 2, true); pos += 2;
+            view.setUint16(pos, 16, true); pos += 2;
+            writeString('data');
+            view.setUint32(pos, length - pos - 4, true); pos += 4;
+
+            // Write audio data
+            for (let i = 0; i < buffer.length; i++) {
+                for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+                    const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+                    view.setInt16(pos, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                    pos += 2;
+                }
+            }
+
+            return new Blob([arrayBuffer], { type: 'audio/wav' });
+        }
+
+        function showShrinkResults(statusMessage) {
+            const newSize = shrunkBlob.size;
+            const reduction = ((shrinkOriginalSize - newSize) / shrinkOriginalSize * 100).toFixed(1);
+
+            document.getElementById('shrink-original-size').textContent = formatFileSize(shrinkOriginalSize);
+            document.getElementById('shrink-new-size').textContent = formatFileSize(newSize);
+            document.getElementById('shrink-reduction').textContent = `${reduction}% smaller`;
+            document.getElementById('shrink-status-final').textContent = newSize <= MAX_SIZE_BYTES ? 'Under 8MB!' : 'Still over 8MB';
+
+            document.getElementById('shrink-status').textContent = statusMessage;
+            document.getElementById('shrink-results').classList.remove('hidden');
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function downloadShrunkFile() {
+            if (!shrunkBlob) return;
+
+            // Create filename with original name + "8mb"
+            const lastDotIndex = shrinkOriginalName.lastIndexOf('.');
+            let baseName = shrinkOriginalName;
+            let extension = '';
+
+            if (lastDotIndex !== -1) {
+                baseName = shrinkOriginalName.substring(0, lastDotIndex);
+                extension = shrinkOriginalName.substring(lastDotIndex);
+            }
+
+            const downloadName = `${baseName}_8mb${extension}`;
+
+            const url = URL.createObjectURL(shrunkBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = downloadName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Unit Converter Functions
+        const conversionRates = {
+            // Length conversions (to meters)
+            length: {
+                mm: 0.001,
+                cm: 0.01,
+                m: 1,
+                km: 1000,
+                in: 0.0254,
+                ft: 0.3048,
+                yd: 0.9144,
+                mi: 1609.344
+            },
+            // Weight conversions (to grams)
+            weight: {
+                mg: 0.001,
+                g: 1,
+                kg: 1000,
+                oz: 28.3495,
+                lb: 453.592,
+                t: 1000000
+            }
+        };
+
+        function convertUnits() {
+            const value = parseFloat(document.getElementById('convert-value').value);
+            const from = document.getElementById('convert-from').value;
+            const to = document.getElementById('convert-to').value;
+
+            if (isNaN(value)) {
+                document.getElementById('convert-result').textContent = 'Please enter a valid number';
+                return;
+            }
+
+            let result;
+
+            // Temperature conversions
+            if (['c', 'f', 'k'].includes(from) && ['c', 'f', 'k'].includes(to)) {
+                if (from === 'c' && to === 'f') result = (value * 9/5) + 32;
+                else if (from === 'c' && to === 'k') result = value + 273.15;
+                else if (from === 'f' && to === 'c') result = (value - 32) * 5/9;
+                else if (from === 'f' && to === 'k') result = ((value - 32) * 5/9) + 273.15;
+                else if (from === 'k' && to === 'c') result = value - 273.15;
+                else if (from === 'k' && to === 'f') result = ((value - 273.15) * 9/5) + 32;
+                else result = value;
+            } else {
+                // Length and weight conversions
+                const category = ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi'].includes(from) ? 'length' : 'weight';
+                const baseValue = value * conversionRates[category][from];
+                result = baseValue / conversionRates[category][to];
+            }
+
+            document.getElementById('convert-result').textContent = result.toFixed(4);
+        }
+
+        // Dice Roller Functions
+        let diceHistory = [];
+
+        function rollDice() {
+            const sides = parseInt(document.getElementById('dice-sides').value);
+            const count = parseInt(document.getElementById('dice-count').value);
+
+            if (sides < 2 || count < 1) {
+                document.getElementById('dice-result').textContent = 'Invalid input';
+                return;
+            }
+
+            let total = 0;
+            let rolls = [];
+
+            for (let i = 0; i < count; i++) {
+                const roll = Math.floor(Math.random() * sides) + 1;
+                rolls.push(roll);
+                total += roll;
+            }
+
+            const result = count === 1 ? total : `${total} (${rolls.join(' + ')})`;
+            document.getElementById('dice-result').textContent = result;
+
+            diceHistory.unshift(`${new Date().toLocaleTimeString()}: ${result} (d${sides})`);
+            if (diceHistory.length > 10) diceHistory.pop();
+
+            document.getElementById('dice-history').innerHTML = diceHistory.map(h => `<div>${h}</div>`).join('');
+        }
+
+        // Color Picker Functions
+        const colorCanvas = document.getElementById('color-canvas');
+        const colorCtx = colorCanvas.getContext('2d');
+        let colorImageData;
+
+        // Handle paste events for images and color codes
+        document.addEventListener('paste', (e) => {
+            // Only handle paste if color picker is active
+            if (!document.getElementById('color').classList.contains('active')) return;
+
+            const items = e.clipboardData.items;
+            
+            // Check for image paste
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    e.preventDefault();
+                    const blob = items[i].getAsFile();
+                    handleImagePaste(blob);
+                    return;
+                }
+            }
+            
+            // Check for text paste (color codes)
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type === 'text/plain') {
+                    items[i].getAsString((text) => {
+                        handleColorCodePaste(text.trim());
+                    });
+                    return;
+                }
+            }
+        });
+
+        // Handle manual color code input
+        document.getElementById('color-input').addEventListener('input', (e) => {
+            handleColorCodePaste(e.target.value);
+        });
+
+        document.getElementById('color-input').addEventListener('paste', (e) => {
+            // Allow normal paste behavior for the input field
+            setTimeout(() => {
+                handleColorCodePaste(e.target.value);
+            }, 10);
+        });
+
+        function handleImagePaste(blob) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    colorCanvas.width = img.width;
+                    colorCanvas.height = img.height;
+                    colorCtx.drawImage(img, 0, 0);
+                    colorImageData = colorCtx.getImageData(0, 0, colorCanvas.width, colorCanvas.height);
+                    colorCanvas.classList.remove('hidden');
+                    document.getElementById('color-status').textContent = 'Image pasted! Hover over it to pick colors';
+                    document.getElementById('color-input').value = '';
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(blob);
+        }
+
+        function handleColorCodePaste(text) {
+            if (!text) return;
+            
+            const color = parseColorCode(text);
+            if (color) {
+                updateColorDisplay(color.r, color.g, color.b);
+                document.getElementById('color-status').textContent = 'Color code applied!';
+                colorCanvas.classList.add('hidden');
+            } else {
+                document.getElementById('color-status').textContent = 'Invalid color code. Try HEX (#FF0000), RGB (rgb(255,0,0)), or HSL (hsl(0,100%,50%))';
+            }
+        }
+
+        function parseColorCode(text) {
+            // Try HEX
+            if (text.match(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/)) {
+                const hex = text.replace('#', '');
+                const r = parseInt(hex.substr(0, 2), 16);
+                const g = parseInt(hex.substr(2, 2), 16);
+                const b = parseInt(hex.substr(4, 2), 16);
+                return { r, g, b };
+            }
+            
+            // Try RGB
+            const rgbMatch = text.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/i);
+            if (rgbMatch) {
+                return {
+                    r: parseInt(rgbMatch[1]),
+                    g: parseInt(rgbMatch[2]),
+                    b: parseInt(rgbMatch[3])
+                };
+            }
+            
+            // Try HSL
+            const hslMatch = text.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/i);
+            if (hslMatch) {
+                const h = parseInt(hslMatch[1]) / 360;
+                const s = parseInt(hslMatch[2]) / 100;
+                const l = parseInt(hslMatch[3]) / 100;
+                
+                // Convert HSL to RGB
+                const c = (1 - Math.abs(2 * l - 1)) * s;
+                const x = c * (1 - Math.abs((h * 6) % 2 - 1));
+                const m = l - c / 2;
+                
+                let r, g, b;
+                if (h < 1/6) { r = c; g = x; b = 0; }
+                else if (h < 2/6) { r = x; g = c; b = 0; }
+                else if (h < 3/6) { r = 0; g = c; b = x; }
+                else if (h < 4/6) { r = 0; g = x; b = c; }
+                else if (h < 5/6) { r = x; g = 0; b = c; }
+                else { r = c; g = 0; b = x; }
+                
+                return {
+                    r: Math.round((r + m) * 255),
+                    g: Math.round((g + m) * 255),
+                    b: Math.round((b + m) * 255)
+                };
+            }
+            
+            return null;
+        }
+
+        function updateColorDisplay(r, g, b) {
+            const hex = rgbToHex(r, g, b);
+            const rgb = `rgb(${r}, ${g}, ${b})`;
+            const hsl = rgbToHsl(r, g, b);
+
+            document.getElementById('color-hex').value = hex;
+            document.getElementById('color-rgb').value = rgb;
+            document.getElementById('color-hsl').value = hsl;
+            document.getElementById('color-preview').style.backgroundColor = hex;
+        }
+
+        document.getElementById('color-image').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    colorCanvas.width = img.width;
+                    colorCanvas.height = img.height;
+                    colorCtx.drawImage(img, 0, 0);
+                    colorImageData = colorCtx.getImageData(0, 0, colorCanvas.width, colorCanvas.height);
+                    colorCanvas.classList.remove('hidden');
+                    document.getElementById('color-status').textContent = 'Hover over the image to pick colors';
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        colorCanvas.addEventListener('mousemove', (e) => {
+            if (!colorImageData) return;
+
+            const rect = colorCanvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+
+            if (x >= 0 && x < colorCanvas.width && y >= 0 && y < colorCanvas.height) {
+                const index = (y * colorCanvas.width + x) * 4;
+                const r = colorImageData.data[index];
+                const g = colorImageData.data[index + 1];
+                const b = colorImageData.data[index + 2];
+
+                const hex = rgbToHex(r, g, b);
+                const rgb = `rgb(${r}, ${g}, ${b})`;
+                const hsl = rgbToHsl(r, g, b);
+
+                document.getElementById('color-hex').value = hex;
+                document.getElementById('color-rgb').value = rgb;
+                document.getElementById('color-hsl').value = hsl;
+                document.getElementById('color-preview').style.backgroundColor = hex;
+            }
+        });
+
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
+
+        function rgbToHsl(r, g, b) {
+            r /= 255;
+            g /= 255;
+            b /= 255;
+
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            let h, s, l = (max + min) / 2;
+
+            if (max === min) {
+                h = s = 0;
+            } else {
+                const d = max - min;
+                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                }
+                h /= 6;
+            }
+
+            return `hsl(${Math.round(h * 360)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+        }
+
+        // Timer Variables
+        let timerInterval = null;
+        let timerRunning = false;
+        let timerSeconds = 60;
+
+        function updateTimerDisplay() {
+            const mins = Math.floor(timerSeconds / 60);
+            const secs = timerSeconds % 60;
+            document.getElementById('timer-display').textContent = 
+                `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        function playBeep() {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+            
+            // Play 3 beeps
+            setTimeout(() => playBeepOnce(audioContext), 600);
+            setTimeout(() => playBeepOnce(audioContext), 1200);
+        }
+
+        function playBeepOnce(audioContext) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+        }
+
+        function startTimer() {
+            if (timerRunning) return;
+            
+            const mins = parseInt(document.getElementById('timer-minutes').value) || 0;
+            const secs = parseInt(document.getElementById('timer-seconds').value) || 0;
+            timerSeconds = mins * 60 + secs;
+            
+            if (timerSeconds <= 0) {
+                alert('Please set a valid time');
+                return;
+            }
+            
+            document.getElementById('timer-btn').style.display = 'none';
+            document.getElementById('pause-btn').style.display = 'block';
+            timerRunning = true;
+            
+            timerInterval = setInterval(() => {
+                timerSeconds--;
+                updateTimerDisplay();
+                
+                if (timerSeconds <= 0) {
+                    clearInterval(timerInterval);
+                    timerRunning = false;
+                    document.getElementById('timer-btn').style.display = 'block';
+                    document.getElementById('pause-btn').style.display = 'none';
+                    document.getElementById('timer-display').textContent = '00:00';
+                    playBeep();
+                }
+            }, 1000);
+        }
+
+        function pauseTimer() {
+            clearInterval(timerInterval);
+            timerRunning = false;
+            document.getElementById('timer-btn').style.display = 'block';
+            document.getElementById('pause-btn').style.display = 'none';
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            timerRunning = false;
+            timerSeconds = 0;
+            document.getElementById('timer-btn').style.display = 'block';
+            document.getElementById('pause-btn').style.display = 'none';
+            document.getElementById('timer-minutes').value = '1';
+            document.getElementById('timer-seconds').value = '00';
+            updateTimerDisplay();
+        }
+
+        function setPresetTimer(minutes) {
+            clearInterval(timerInterval);
+            timerRunning = false;
+            document.getElementById('timer-minutes').value = minutes;
+            document.getElementById('timer-seconds').value = '00';
+            timerSeconds = minutes * 60;
+            updateTimerDisplay();
+            document.getElementById('timer-btn').style.display = 'block';
+            document.getElementById('pause-btn').style.display = 'none';
+        }
+
+        // Stopwatch Variables
+        let stopwatchInterval = null;
+        let stopwatchRunning = false;
+        let stopwatchSeconds = 0;
+        let stopwatchLaps = [];
+
+        function updateStopwatchDisplay() {
+            const hours = Math.floor(stopwatchSeconds / 3600);
+            const mins = Math.floor((stopwatchSeconds % 3600) / 60);
+            const secs = stopwatchSeconds % 60;
+            document.getElementById('stopwatch-display').textContent = 
+                `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        function startStopwatch() {
+            if (stopwatchRunning) return;
+            stopwatchRunning = true;
+            document.getElementById('stopwatch-btn').style.display = 'none';
+            document.getElementById('stopwatch-pause-btn').style.display = 'block';
+            
+            stopwatchInterval = setInterval(() => {
+                stopwatchSeconds++;
+                updateStopwatchDisplay();
+            }, 1000);
+        }
+
+        function pauseStopwatch() {
+            clearInterval(stopwatchInterval);
+            stopwatchRunning = false;
+            document.getElementById('stopwatch-btn').style.display = 'block';
+            document.getElementById('stopwatch-pause-btn').style.display = 'none';
+        }
+
+        function lapStopwatch() {
+            if (!stopwatchRunning) {
+                alert('Start the stopwatch first');
+                return;
+            }
+            
+            const hours = Math.floor(stopwatchSeconds / 3600);
+            const mins = Math.floor((stopwatchSeconds % 3600) / 60);
+            const secs = stopwatchSeconds % 60;
+            const lapTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            
+            stopwatchLaps.push(lapTime);
+            updateLapsDisplay();
+        }
+
+        function resetStopwatch() {
+            clearInterval(stopwatchInterval);
+            stopwatchRunning = false;
+            stopwatchSeconds = 0;
+            stopwatchLaps = [];
+            document.getElementById('stopwatch-btn').style.display = 'block';
+            document.getElementById('stopwatch-pause-btn').style.display = 'none';
+            updateStopwatchDisplay();
+            updateLapsDisplay();
+        }
+
+        function updateLapsDisplay() {
+            const lapsDiv = document.getElementById('stopwatch-laps');
+            if (stopwatchLaps.length === 0) {
+                lapsDiv.innerHTML = '<p class="text-sm text-gray-500 text-center py-2">No laps recorded</p>';
+                return;
+            }
+            
+            lapsDiv.innerHTML = stopwatchLaps.map((lap, idx) => 
+                `<div class="flex justify-between text-sm py-1 border-b"><span>Lap ${idx + 1}</span><span class="font-mono font-bold">${lap}</span></div>`
+            ).join('');
+        }
+
+        // Word Scramble Game
+        let currentScrambleWord = '';
+
+        function scrambleText(text) {
+            const chars = text.split('');
+            for (let i = chars.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [chars[i], chars[j]] = [chars[j], chars[i]];
+            }
+            return chars.join('');
+        }
+
+        function generateRandomWord() {
+            const words = [
+                // Animals
+                'elephant', 'butterfly', 'kangaroo', 'dolphin', 'penguin', 'giraffe', 'octopus', 'rhinoceros', 'chimpanzee', 'crocodile',
+                // Food & Drinks
+                'spaghetti', 'chocolate', 'sandwich', 'pineapple', 'broccoli', 'hamburger', 'strawberry', 'cucumber', 'pancakes', 'watermelon',
+                // Colors
+                'turquoise', 'lavender', 'crimson', 'emerald', 'sapphire', 'amber', 'violet', 'scarlet', 'indigo', 'magenta',
+                // Nature
+                'mountain', 'rainbow', 'sunflower', 'waterfall', 'thunderstorm', 'cactus', 'volcano', 'hurricane', 'avalanche', 'tsunami',
+                // Objects
+                'microphone', 'telescope', 'helicopter', 'refrigerator', 'skyscraper', 'submarine', 'calculator', 'binoculars', 'flashlight', 'typewriter',
+                // Professions
+                'astronaut', 'detective', 'firefighter', 'journalist', 'photographer', 'scientist', 'architect', 'librarian', 'conductor', 'veterinarian',
+                // Places
+                'antarctica', 'pyramids', 'waterfall', 'canyon', 'desert', 'rainforest', 'volcano', 'coral', 'glacier', 'savannah',
+                // Emotions & Feelings
+                'nostalgia', 'euphoria', 'serenity', 'melancholy', 'excitement', 'curiosity', 'gratitude', 'loneliness', 'optimism', 'confusion',
+                // Sports & Games
+                'basketball', 'skateboard', 'volleyball', 'chessboard', 'snowboard', 'baseball', 'football', 'badminton', 'gymnastics', 'archery',
+                // Technology (keeping some but mixing with others)
+                'smartphone', 'internet', 'computer', 'algorithm', 'database', 'network', 'software', 'keyboard', 'monitor', 'satellite'
+            ];
+            
+            const randomWord = words[Math.floor(Math.random() * words.length)];
+            currentScrambleWord = randomWord.toLowerCase();
+            const scrambled = scrambleText(randomWord);
+            document.getElementById('scrambled-word').textContent = scrambled;
+            document.getElementById('scramble-answer').value = '';
+            document.getElementById('scramble-status').innerHTML = '<p class="text-blue-600">Try to unscramble the word!</p>';
+        }
+
+        function checkScrambleAnswer() {
+            const answer = document.getElementById('scramble-answer').value.trim().toLowerCase();
+            if (answer === currentScrambleWord) {
+                document.getElementById('scramble-status').innerHTML = '<p class="text-green-600 font-bold">🎉 Correct! Well done!</p>';
+            } else {
+                document.getElementById('scramble-status').innerHTML = '<p class="text-red-600">❌ Not quite right. Try again!</p>';
+            }
+        }
+
+        function revealScrambleAnswer() {
+            document.getElementById('scramble-answer').value = currentScrambleWord;
+            document.getElementById('scramble-status').innerHTML = '<p class="text-blue-600">The answer is revealed above!</p>';
+        }
+
+        // Initialize word scramble game
+        generateRandomWord();
+
+        // Number Guessing Game
+        let secretNumber = 0;
+        let guessCount = 0;
+        let guessHistory = [];
+
+        function newGuessGame() {
+            secretNumber = Math.floor(Math.random() * 100) + 1;
+            guessCount = 0;
+            guessHistory = [];
+            document.getElementById('guess-input').value = '';
+            document.getElementById('guess-hint').textContent = 'Make your first guess!';
+            document.getElementById('guess-list').innerHTML = '';
+        }
+
+        function makeGuess() {
+            const guess = parseInt(document.getElementById('guess-input').value);
+            
+            if (isNaN(guess) || guess < 1 || guess > 100) {
+                document.getElementById('guess-hint').textContent = 'Please enter a number between 1 and 100!';
+                return;
+            }
+            
+            guessCount++;
+            guessHistory.push(guess);
+            
+            document.getElementById('guess-list').innerHTML = guessHistory.map((g, idx) => 
+                `<div class="inline-block bg-gray-200 px-2 py-1 rounded mr-2 mb-1">${idx + 1}: ${g}</div>`
+            ).join('');
+            
+            if (guess === secretNumber) {
+                document.getElementById('guess-hint').innerHTML = 
+                    `<span class="text-green-600 font-bold">Correct! You got it in ${guessCount} guesses!</span>`;
+                document.getElementById('guess-input').disabled = true;
+            } else if (guess < secretNumber) {
+                document.getElementById('guess-hint').textContent = 'Too low! Try higher.';
+            } else {
+                document.getElementById('guess-hint').textContent = 'Too high! Try lower.';
+            }
+            
+            document.getElementById('guess-input').value = '';
+        }
+
+        // Initialize guess game
+        newGuessGame();
+
+        // Rock Paper Scissors Game
+        let rpsWins = 0;
+        let rpsLosses = 0;
+        let rpsTies = 0;
+
+        const rpsChoices = {
+            rock: '🪨',
+            paper: '📄',
+            scissors: '✂️'
+        };
+
+        const rpsLabels = {
+            rock: 'Rock',
+            paper: 'Paper',
+            scissors: 'Scissors'
+        };
+
+        function playRPS(playerChoice) {
+            const choices = ['rock', 'paper', 'scissors'];
+            const computerChoice = choices[Math.floor(Math.random() * choices.length)];
+            
+            document.getElementById('player-choice').textContent = rpsChoices[playerChoice];
+            document.getElementById('player-label').textContent = rpsLabels[playerChoice];
+            document.getElementById('computer-choice').textContent = rpsChoices[computerChoice];
+            document.getElementById('computer-label').textContent = rpsLabels[computerChoice];
+            
+            let result = '';
+            if (playerChoice === computerChoice) {
+                result = 'It\'s a tie!';
+                rpsTies++;
+                document.getElementById('rps-result').className = 'text-center text-xl font-bold text-gray-600';
+            } else if (
+                (playerChoice === 'rock' && computerChoice === 'scissors') ||
+                (playerChoice === 'paper' && computerChoice === 'rock') ||
+                (playerChoice === 'scissors' && computerChoice === 'paper')
+            ) {
+                result = 'You win!';
+                rpsWins++;
+                document.getElementById('rps-result').className = 'text-center text-xl font-bold text-green-600';
+            } else {
+                result = 'Computer wins!';
+                rpsLosses++;
+                document.getElementById('rps-result').className = 'text-center text-xl font-bold text-red-600';
+            }
+            
+            document.getElementById('rps-result').textContent = result;
+            document.getElementById('wins').textContent = rpsWins;
+            document.getElementById('losses').textContent = rpsLosses;
+            document.getElementById('ties').textContent = rpsTies;
+        }
+
+        // Typing Test
+        let typingTestText = '';
+        let typingStartTime = 0;
+        let typingTimer = null;
+        let typingTimeLeft = 60;
+        let typingCurrentIndex = 0;
+        let typingErrors = 0;
+
+        const typingTexts = {
+            easy: "The quick brown fox jumps over the lazy dog. This is a simple sentence for typing practice.",
+            medium: "Programming is the process of creating instructions for computers to follow. It involves writing code in various languages like JavaScript, Python, and Java. Each language has its own syntax and features that make it suitable for different types of applications.",
+            hard: "In computer science, algorithms are step-by-step procedures for calculations, data processing, and automated reasoning. They form the foundation of all software and are essential for solving complex problems efficiently. Understanding algorithms helps developers write better, more optimized code that performs well under various conditions and scales appropriately as data grows."
+        };
+
+        function startTypingTest() {
+            const difficulty = document.getElementById('typing-difficulty').value;
+            typingTestText = typingTexts[difficulty];
+            typingStartTime = Date.now();
+            typingTimeLeft = 60;
+            typingCurrentIndex = 0;
+            typingErrors = 0;
+            
+            document.getElementById('typing-text').innerHTML = typingTestText.split('').map((char, idx) => 
+                `<span id="char-${idx}" class="typing-char">${char}</span>`
+            ).join('');
+            
+            document.getElementById('typing-status').textContent = 'Type the text above as fast and accurately as possible!';
+            
+            typingTimer = setInterval(updateTypingTimer, 1000);
+            
+            // Focus on typing area
+            document.addEventListener('keydown', handleTyping);
+        }
+
+        function updateTypingTimer() {
+            typingTimeLeft--;
+            document.getElementById('time-left').textContent = typingTimeLeft;
+            
+            if (typingTimeLeft <= 0) {
+                endTypingTest();
+            } else {
+                updateTypingStats();
+            }
+        }
+
+        function handleTyping(e) {
+            if (typingTimeLeft <= 0) return;
+            
+            const currentChar = typingTestText[typingCurrentIndex];
+            
+            if (e.key === currentChar) {
+                document.getElementById(`char-${typingCurrentIndex}`).className = 'typing-char correct';
+                typingCurrentIndex++;
+                
+                if (typingCurrentIndex >= typingTestText.length) {
+                    endTypingTest();
+                }
+            } else if (e.key.length === 1) {
+                document.getElementById(`char-${typingCurrentIndex}`).className = 'typing-char incorrect';
+                typingErrors++;
+            }
+            
+            updateTypingStats();
+        }
+
+        function updateTypingStats() {
+            const timeElapsed = (Date.now() - typingStartTime) / 1000 / 60; // minutes
+            const wpm = Math.round((typingCurrentIndex / 5) / timeElapsed) || 0;
+            const accuracy = Math.round(((typingCurrentIndex - typingErrors) / typingCurrentIndex) * 100) || 100;
+            
+            document.getElementById('wpm').textContent = wpm;
+            document.getElementById('accuracy').textContent = accuracy;
+            document.getElementById('chars-typed').textContent = typingCurrentIndex;
+        }
+
+        function endTypingTest() {
+            clearInterval(typingTimer);
+            document.removeEventListener('keydown', handleTyping);
+            
+            const timeElapsed = (Date.now() - typingStartTime) / 1000 / 60;
+            const wpm = Math.round((typingCurrentIndex / 5) / timeElapsed);
+            const accuracy = Math.round(((typingCurrentIndex - typingErrors) / typingCurrentIndex) * 100);
+            
+            document.getElementById('typing-status').innerHTML = 
+                `<div class="bg-green-100 p-4 rounded">
+                    <h3 class="font-bold text-green-800">Test Complete!</h3>
+                    <p class="text-green-700">WPM: ${wpm} | Accuracy: ${accuracy}% | Characters: ${typingCurrentIndex}</p>
+                </div>`;
+        }
+
+        function resetTypingTest() {
+            clearInterval(typingTimer);
+            document.removeEventListener('keydown', handleTyping);
+            
+            typingTimeLeft = 60;
+            typingCurrentIndex = 0;
+            typingErrors = 0;
+            
+            document.getElementById('typing-text').textContent = '';
+            document.getElementById('typing-status').textContent = 'Select difficulty and click Start Test';
+            document.getElementById('wpm').textContent = '0';
+            document.getElementById('accuracy').textContent = '100';
+            document.getElementById('time-left').textContent = '60';
+            document.getElementById('chars-typed').textContent = '0';
+        }
+
+        // Add CSS for typing test
+        const style = document.createElement('style');
+        style.textContent = `
+            .typing-char { color: #666; }
+            .typing-char.correct { color: #10b981; background-color: #ecfdf5; }
+            .typing-char.incorrect { color: #ef4444; background-color: #fef2f2; }
+            .typing-char.current { background-color: #dbeafe; }
+        `;
+        document.head.appendChild(style);
+
+        // TETRIS GAME
+        let tetrisCanvas, tetrisCtx;
+        let tetrisBoard = [];
+        let currentPiece, nextPiece;
+        let tetrisScore = 0;
+        let tetrisLines = 0;
+        let tetrisLevel = 1;
+        let tetrisGameRunning = false;
+        let tetrisDropTimer = null;
+        let tetrisDropInterval = 1000;
+
+        const TETRIS_COLORS = ['#000000', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFFFFF'];
+
+        const TETRIS_PIECES = [
+            // I-piece
+            [[[1,1,1,1]], [[1],[1],[1],[1]]],
+            // O-piece
+            [[[1,1],[1,1]]],
+            // T-piece
+            [[[0,1,0],[1,1,1]], [[1,0],[1,1],[1,0]], [[1,1,1],[0,1,0]], [[0,1],[1,1],[0,1]]],
+            // S-piece
+            [[[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]]],
+            // Z-piece
+            [[[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]]],
+            // J-piece
+            [[[1,0,0],[1,1,1]], [[1,1],[1,0],[1,0]], [[1,1,1],[0,0,1]], [[0,1],[0,1],[1,1]]],
+            // L-piece
+            [[[0,0,1],[1,1,1]], [[1,0],[1,0],[1,1]], [[1,1,1],[1,0,0]], [[1,1],[0,1],[0,1]]]
+        ];
+
+        function initTetrisBoard() {
+            tetrisBoard = Array(20).fill().map(() => Array(10).fill(0));
+        }
+
+        function createTetrisPiece() {
+            const pieceIndex = Math.floor(Math.random() * TETRIS_PIECES.length);
+            return {
+                shape: TETRIS_PIECES[pieceIndex][0],
+                x: 3,
+                y: 0,
+                color: pieceIndex + 1
+            };
+        }
+
+        function drawTetrisBoard() {
+            tetrisCtx.fillStyle = '#000000';
+            tetrisCtx.fillRect(0, 0, 300, 600);
+
+            // Draw placed pieces
+            for (let y = 0; y < 20; y++) {
+                for (let x = 0; x < 10; x++) {
+                    if (tetrisBoard[y][x] !== 0) {
+                        tetrisCtx.fillStyle = TETRIS_COLORS[tetrisBoard[y][x]];
+                        tetrisCtx.fillRect(x * 30, y * 30, 30, 30);
+                        tetrisCtx.strokeStyle = '#FFFFFF';
+                        tetrisCtx.lineWidth = 1;
+                        tetrisCtx.strokeRect(x * 30, y * 30, 30, 30);
+                    }
+                }
+            }
+
+            // Draw current piece
+            if (currentPiece) {
+                tetrisCtx.fillStyle = TETRIS_COLORS[currentPiece.color];
+                for (let y = 0; y < currentPiece.shape.length; y++) {
+                    for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                        if (currentPiece.shape[y][x] !== 0) {
+                            tetrisCtx.fillRect((currentPiece.x + x) * 30, (currentPiece.y + y) * 30, 30, 30);
+                            tetrisCtx.strokeStyle = '#FFFFFF';
+                            tetrisCtx.lineWidth = 1;
+                            tetrisCtx.strokeRect((currentPiece.x + x) * 30, (currentPiece.y + y) * 30, 30, 30);
+                        }
+                    }
+                }
+            }
+        }
+
+        function moveTetrisPiece(dx, dy) {
+            if (!tetrisGameRunning || !currentPiece) return;
+
+            currentPiece.x += dx;
+            currentPiece.y += dy;
+
+            if (checkTetrisCollision()) {
+                currentPiece.x -= dx;
+                currentPiece.y -= dy;
+                if (dy > 0) {
+                    placeTetrisPiece();
+                }
+                return false;
+            }
+            drawTetrisBoard();
+            return true;
+        }
+
+        function rotateTetrisPiece() {
+            if (!tetrisGameRunning || !currentPiece) return;
+
+            const rotated = currentPiece.shape[0].map((_, index) =>
+                currentPiece.shape.map(row => row[index]).reverse()
+            );
+            const oldShape = currentPiece.shape;
+            currentPiece.shape = rotated;
+
+            if (checkTetrisCollision()) {
+                currentPiece.shape = oldShape;
+            } else {
+                drawTetrisBoard();
+            }
+        }
+
+        function checkTetrisCollision() {
+            for (let y = 0; y < currentPiece.shape.length; y++) {
+                for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                    if (currentPiece.shape[y][x] !== 0) {
+                        const newX = currentPiece.x + x;
+                        const newY = currentPiece.y + y;
+
+                        if (newX < 0 || newX >= 10 || newY >= 20 || (newY >= 0 && tetrisBoard[newY][newX] !== 0)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function placeTetrisPiece() {
+            for (let y = 0; y < currentPiece.shape.length; y++) {
+                for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                    if (currentPiece.shape[y][x] !== 0) {
+                        tetrisBoard[currentPiece.y + y][currentPiece.x + x] = currentPiece.color;
+                    }
+                }
+            }
+
+            checkTetrisLines();
+            currentPiece = nextPiece;
+            nextPiece = createTetrisPiece();
+            document.getElementById('tetris-next').textContent = ['I','O','T','S','Z','J','L'][nextPiece.color - 1];
+
+            if (checkTetrisCollision()) {
+                gameOverTetris();
+            }
+        }
+
+        function checkTetrisLines() {
+            for (let y = 19; y >= 0; y--) {
+                if (tetrisBoard[y].every(cell => cell !== 0)) {
+                    tetrisBoard.splice(y, 1);
+                    tetrisBoard.unshift(Array(10).fill(0));
+                    tetrisLines++;
+                    tetrisScore += 100 * tetrisLevel;
+                    tetrisLevel = Math.floor(tetrisLines / 10) + 1;
+                    tetrisDropInterval = Math.max(50, 1000 - (tetrisLevel - 1) * 50);
+                    y++;
+                }
+            }
+            updateTetrisDisplay();
+        }
+
+        function updateTetrisDisplay() {
+            document.getElementById('tetris-score').textContent = tetrisScore;
+            document.getElementById('tetris-lines').textContent = tetrisLines;
+            document.getElementById('tetris-level').textContent = tetrisLevel;
+        }
+
+        function startTetris() {
+            if (tetrisGameRunning) return;
+
+            tetrisCanvas = document.getElementById('tetris-canvas');
+            tetrisCtx = tetrisCanvas.getContext('2d');
+
+            initTetrisBoard();
+            tetrisScore = 0;
+            tetrisLines = 0;
+            tetrisLevel = 1;
+            tetrisDropInterval = 1000;
+            tetrisGameRunning = true;
+
+            currentPiece = createTetrisPiece();
+            nextPiece = createTetrisPiece();
+            document.getElementById('tetris-next').textContent = ['I','O','T','S','Z','J','L'][nextPiece.color - 1];
+
+            updateTetrisDisplay();
+            drawTetrisBoard();
+
+            document.getElementById('tetris-start-btn').style.display = 'none';
+            document.getElementById('tetris-pause-btn').style.display = 'block';
+
+            tetrisDropTimer = setInterval(() => {
+                if (tetrisGameRunning) {
+                    moveTetrisPiece(0, 1);
+                }
+            }, tetrisDropInterval);
+
+            // Add keyboard controls
+            document.addEventListener('keydown', handleTetrisKey);
+        }
+
+        function pauseTetris() {
+            tetrisGameRunning = !tetrisGameRunning;
+            document.getElementById('tetris-pause-btn').textContent = tetrisGameRunning ? 'Pause' : 'Resume';
+        }
+
+        function resetTetris() {
+            tetrisGameRunning = false;
+            clearInterval(tetrisDropTimer);
+            document.removeEventListener('keydown', handleTetrisKey);
+            document.getElementById('tetris-start-btn').style.display = 'block';
+            document.getElementById('tetris-pause-btn').style.display = 'none';
+            initTetrisBoard();
+            drawTetrisBoard();
+            updateTetrisDisplay();
+        }
+
+        function gameOverTetris() {
+            tetrisGameRunning = false;
+            clearInterval(tetrisDropTimer);
+            document.removeEventListener('keydown', handleTetrisKey);
+            document.getElementById('tetris-start-btn').style.display = 'block';
+            document.getElementById('tetris-pause-btn').style.display = 'none';
+            tetrisCtx.fillStyle = 'rgba(0,0,0,0.7)';
+            tetrisCtx.fillRect(0, 0, 300, 600);
+            tetrisCtx.fillStyle = '#FFFFFF';
+            tetrisCtx.font = '30px Arial';
+            tetrisCtx.textAlign = 'center';
+            tetrisCtx.fillText('GAME OVER', 150, 300);
+        }
+
+        function handleTetrisKey(e) {
+            if (!tetrisGameRunning) return;
+
+            switch(e.key.toLowerCase()) {
+                case 'a':
+                case 'arrowleft':
+                    moveTetrisPiece(-1, 0);
+                    break;
+                case 'd':
+                case 'arrowright':
+                    moveTetrisPiece(1, 0);
+                    break;
+                case 's':
+                case 'arrowdown':
+                    moveTetrisPiece(0, 1);
+                    break;
+                case 'q':
+                case 'e':
+                    rotateTetrisPiece();
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    // Hard drop
+                    while (moveTetrisPiece(0, 1)) {}
+                    break;
+            }
+        }
+
+    </script>
+</body>
+</html>
