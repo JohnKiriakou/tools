@@ -134,6 +134,7 @@ let msTimerInterval;
 let msStartTime = 0;
 let msFinalTime = 0;
 let msFlagsCount = 0;
+document.addEventListener('DOMContentLoaded', updateBestTimesDisplay);
 
 function startMinesweeper() {
     const diff = document.getElementById('minesweeper-difficulty').value;
@@ -159,6 +160,32 @@ function startMinesweeper() {
 
     initMSBoard();
 }
+
+// Load best times on startup
+function updateBestTimesDisplay() {
+    const bestTimes = JSON.parse(localStorage.getItem('msBestTimes')) || { easy: null, medium: null, hard: null };
+    document.getElementById('best-easy').innerText = bestTimes.easy ? bestTimes.easy.toFixed(2) + 's' : '--';
+    document.getElementById('best-medium').innerText = bestTimes.medium ? bestTimes.medium.toFixed(2) + 's' : '--';
+    document.getElementById('best-hard').innerText = bestTimes.hard ? bestTimes.hard.toFixed(2) + 's' : '--';
+}
+
+function saveBestTime(difficulty, time) {
+    // We only track best times for standard difficulties, not 'custom'
+    if (difficulty === 'custom') return;
+
+    const bestTimes = JSON.parse(localStorage.getItem('msBestTimes')) || { easy: null, medium: null, hard: null };
+    
+    // If no best time exists or the current time is faster, update it
+    if (bestTimes[difficulty] === null || time < bestTimes[difficulty]) {
+        bestTimes[difficulty] = time;
+        localStorage.setItem('msBestTimes', JSON.stringify(bestTimes));
+        updateBestTimesDisplay();
+        return true; // New record!
+    }
+    return false;
+}
+
+
 
 function getMinesweeperSettings(diff) {
     if (diff === 'easy') return { rows: 8, cols: 8, mines: 10 };
@@ -225,9 +252,15 @@ function handleMSClick(r, c) {
     if (msGameOver || msBoard[r][c].flagged || msBoard[r][c].revealed) return;
 
     if (msFirstClick) {
+        document.getElementById('minesweeper-status').innerText = "Generating board...";
         msFirstClick = false;
-        placeMines(r, c);
-        startMSTimer();
+        setTimeout(() => {
+            placeMines(r, c);
+            startMSTimer();
+            revealCell(r, c);
+            document.getElementById('minesweeper-status').innerText = "";
+        }, 10);
+        return;
     }
 
     revealCell(r, c);
@@ -238,7 +271,7 @@ function placeMines(safeR, safeC) {
     let solvable = false;
     const generationStartTime = performance.now(); // Renamed to avoid confusion
 
-    while (!solvable && attempts < 500) {
+    while (!solvable && attempts < 100) {
         attempts++;
         
         // IMPORTANT: Clear the board from the previous failed attempt
@@ -422,6 +455,7 @@ function gameOver(won) {
     msFinalTime = ((Date.now() - msStartTime) / 1000) || 0;
 
     const status = document.getElementById('minesweeper-status');
+    const diff = document.getElementById('minesweeper-difficulty').value;
     document.getElementById('minesweeper-timer').innerText = msFinalTime.toFixed(2);
 
     let gamePoints = 0;
@@ -453,6 +487,13 @@ function gameOver(won) {
     } else {
         gamePoints = Math.max(0, gamePoints);
     }
+
+    // SAVE BEST TIME LOGIC
+        const isNewRecord = saveBestTime(diff, msFinalTime);
+        if (isNewRecord) {
+            pointBreakdown += "\nNEW PERSONAL BEST!";
+        }
+    
 
     // difficulty
     let difficultyMultiplier = 1;
@@ -1059,6 +1100,23 @@ document.addEventListener('DOMContentLoaded', toggleCustomMinesweeper);
             </div>
             <div id="minesweeper-status" class="text-center mt-4 font-bold text-lg h-8"></div>
             <p class="text-center text-sm text-slate-500 mt-3">Use left click to uncover.</p>
+            <div class="mt-6 bg-slate-50 p-4 rounded-lg border">
+    <h3 class="font-bold text-center mb-2">Best Times</h3>
+        <div class="grid grid-cols-3 gap-2 text-center text-sm">
+            <div>
+                <p class="font-semibold">Easy</p>
+                <p id="best-easy">--</p>
+            </div>
+            <div>
+                <p class="font-semibold">Medium</p>
+                <p id="best-medium">--</p>
+            </div>
+            <div>
+                <p class="font-semibold">Hard</p>
+                <p id="best-hard">--</p>
+            </div>
+        </div>
+    </div>
         </section>
 
         <section id="timers" class="tool-card bg-white p-6 rounded-xl shadow-md">
