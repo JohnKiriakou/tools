@@ -489,11 +489,12 @@ function gameOver(won) {
     }
 
     // SAVE BEST TIME LOGIC
+    if (won) {
         const isNewRecord = saveBestTime(diff, msFinalTime);
         if (isNewRecord) {
             pointBreakdown += "\nNEW PERSONAL BEST!";
         }
-    
+    }
 
     // difficulty
     let difficultyMultiplier = 1;
