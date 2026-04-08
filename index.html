@@ -125,6 +125,7 @@
                 oscillator.stop(audioContext.currentTime + 0.3);
             }
         };
+let msTotalScore = parseInt(localStorage.getItem('msTotalScore')) || 0;
 let msBoard = [];
 let msRows = 8, msCols = 8, msMinesCount = 10;
 let msGameOver = false;
@@ -419,74 +420,88 @@ function gameOver(won) {
     msGameOver = true;
     clearInterval(msTimerInterval);
     msFinalTime = ((Date.now() - msStartTime) / 1000) || 0;
-    document.getElementById('minesweeper-timer').innerText = msFinalTime.toFixed(2);
-    
-    let gamePoints = 0;
-    let pointBreakdown = "";
-
-    if (won) {
-        // 1. Base Win Points
-        gamePoints += 100;
-        
-        // 2. Flagging Logic
-        let flagPoints = 0;
-        let flagsPlaced = 0;
-        
-        for (let r = 0; r < msRows; r++) {
-            for (let c = 0; c < msCols; c++) {
-                if (msBoard[r][c].flagged) {
-                    flagsPlaced++;
-                    if (msBoard[r][c].mine) flagPoints += 10;
-                    else flagPoints -= 10;
-                }
-            }
-        }
-
-        // If no flags were placed, give points for all mines (mental flagging)
-        if (flagsPlaced === 0) {
-            flagPoints = msMinesCount * 10;
-        }
-        gamePoints += flagPoints;
-
-        // 3. Speed Bonus Logic
-        // Max points at 1s per mine. Every 10s extra = -10 points.
-        let targetTime = msMinesCount;
-        let speedBonus = 0;
-        if (msFinalTime <= targetTime) {
-            speedBonus = 50;
-        } else {
-            let extraChunks = Math.floor((msFinalTime - targetTime) / 10);
-            speedBonus = Math.max(0, 50 - (extraChunks * 10));
-        }
-        gamePoints += speedBonus;
-
-        // Ensure you can't lose points from a single game
-        gamePoints = Math.max(0, gamePoints);
-        
-        // Update Total
-        msTotalScore += gamePoints;
-        localStorage.setItem('msTotalScore', msTotalScore);
-        document.getElementById('minesweeper-total-score').innerText = msTotalScore;
-        
-        pointBreakdown = ` (+${gamePoints} pts)`;
-    }
 
     const status = document.getElementById('minesweeper-status');
-    status.innerText = won ? `YOU WIN!${pointBreakdown} Time: ${msFinalTime.toFixed(2)}s` : `GAME OVER! Time: ${msFinalTime.toFixed(2)}s`;
-    status.className = won ? "text-green-600 font-bold text-center mt-4" : "text-red-600 font-bold text-center mt-4";
+    document.getElementById('minesweeper-timer').innerText = msFinalTime.toFixed(2);
 
-    // Reveal mines and wrong flags
+    let gamePoints = 0;
+    let correctFlags = 0;
+    let wrongFlags = 0;
+    let speedScore = 0;
+    let pointBreakdown = "";
+
+    // count flags
+    for (let r = 0; r < msRows; r++) {
+        for (let c = 0; c < msCols; c++) {
+            if (msBoard[r][c].flagged) {
+                if (msBoard[r][c].mine) correctFlags++;
+                else wrongFlags++;
+            }
+        }
+    }
+
+    // flag scoring (always)
+    gamePoints += correctFlags * 5;
+    gamePoints -= wrongFlags * 10;
+
+    if (won) {
+        gamePoints += 100;
+
+        const parTime = msMinesCount * 2;
+        speedScore = Math.max(0, Math.floor(parTime - msFinalTime));
+        gamePoints += speedScore;
+    } else {
+        gamePoints = Math.max(0, gamePoints);
+    }
+
+    // difficulty
+    let difficultyMultiplier = 1;
+    if (msRows === 12) difficultyMultiplier = 1.5;
+    if (msRows === 16) difficultyMultiplier = 2;
+
+    gamePoints = Math.floor(gamePoints * difficultyMultiplier);
+
+    // save score
+    msTotalScore += gamePoints;
+    localStorage.setItem('msTotalScore', msTotalScore);
+    document.getElementById('minesweeper-total-score').innerText = msTotalScore;
+
+    // breakdown (only meaningful on win)
+    if (won) {
+        pointBreakdown = `
+Base: +100
+Flags: +${correctFlags * 5} / -${wrongFlags * 10}
+Speed: +${speedScore}
+Total: +${gamePoints}
+`;
+    }
+
+    status.innerText = won
+        ? `YOU WIN!\n${pointBreakdown}\nTime: ${msFinalTime.toFixed(2)}s`
+        : `GAME OVER! (+${gamePoints}) Time: ${msFinalTime.toFixed(2)}s`;
+
+    status.className = won
+        ? "text-green-600 font-bold text-center mt-4"
+        : "text-red-600 font-bold text-center mt-4";
+
+    // reveal everything
     for (let r = 0; r < msRows; r++) {
         for (let c = 0; c < msCols; c++) {
             const cell = msBoard[r][c];
             const el = document.getElementById(`ms-${r}-${c}`);
             if (!el) continue;
-            if (cell.mine) {
+
+            if (cell.mine && cell.flagged) {
+                el.classList.add('revealed');
+                el.innerHTML = '<img src="flagright.png">';
+            }
+            else if (cell.mine) {
                 el.classList.add('revealed', 'mine');
                 el.innerText = '💣';
-            } else if (cell.flagged && !cell.mine) {
+            }
+            else if (cell.flagged) {
                 el.classList.add('revealed');
-                el.innerHTML = '<img src="flagwrong.png" alt="wrong flag">';
+                el.innerHTML = '<img src="flagwrong.png">';
             }
         }
     }
@@ -1090,9 +1105,6 @@ document.addEventListener('DOMContentLoaded', toggleCustomMinesweeper);
     </main>
 
     <script>
-
-        let msTotalScore = parseInt(localStorage.getItem('msTotalScore')) || 0;
-
         function showTool(id) {
             document.querySelectorAll('.tool-card').forEach(c => c.classList.remove('active'));
             document.getElementById(id).classList.add('active');
