@@ -140,6 +140,12 @@ function startMinesweeper() {
     const diff = document.getElementById('minesweeper-difficulty').value;
     const settings = getMinesweeperSettings(diff);
 
+    const winSnd = document.getElementById('snd-win');
+    if (winSnd) {
+        winSnd.pause();
+        winSnd.currentTime = 0;
+    }
+
     msRows = settings.rows;
     msCols = settings.cols;
     msMinesCount = settings.mines;
@@ -392,11 +398,14 @@ function revealCell(r, c) {
     el.dataset.mines = cell.neighbors;
 
     if (cell.mine) {
-        el.innerText = '💣';
+        playMSAudio('snd-explode'); 
+        el.innerHTML = '<img src="bomb.png" alt="bomb">';
         el.classList.add('mine');
         gameOver(false);
         return;
     }
+
+    playMSAudio('snd-reveal');
 
     if (cell.neighbors > 0) {
         el.innerHTML = `<img src="${cell.neighbors}.png" alt="${cell.neighbors}">`;
@@ -418,6 +427,7 @@ function handleMSRightClick(r, c) {
 
     const el = document.getElementById(`ms-${r}-${c}`);
     if (cell.flagged) {
+        playMSAudio('snd-flag');
         el.classList.add('flagged');
         el.innerHTML = '<img src="flag.png" alt="flag">';
         msFlagsCount--;
@@ -463,6 +473,10 @@ function gameOver(won) {
     let wrongFlags = 0;
     let speedScore = 0;
     let pointBreakdown = "";
+
+    if (won) {
+        playMSAudio('snd-win');
+    }
 
     // count flags
     for (let r = 0; r < msRows; r++) {
@@ -539,13 +553,21 @@ Total: +${gamePoints}
             }
             else if (cell.mine) {
                 el.classList.add('revealed', 'mine');
-                el.innerText = '💣';
+                el.innerHTML = '<img src="bomb.png" alt="bomb">';
             }
             else if (cell.flagged) {
                 el.classList.add('revealed');
                 el.innerHTML = '<img src="flagwrong.png">';
             }
         }
+    }
+}
+
+function playMSAudio(id) {
+    const sound = document.getElementById(id);
+    if (sound) {
+        sound.currentTime = 0; // Reset to start for rapid clicks
+        sound.play().catch(e => console.log("Audio play blocked until user interacts"));
     }
 }
 
@@ -2706,5 +2728,9 @@ document.addEventListener('DOMContentLoaded', toggleCustomMinesweeper);
         }
 
     </script>
+    <audio id="snd-explode" src="explode.mp3" preload="auto"></audio>
+    <audio id="snd-reveal" src="reveal.mp3" preload="auto"></audio>
+    <audio id="snd-win" src="win.mp3" preload="auto"></audio>
+    <audio id="snd-flag" src="flagplace.mp3" preload="auto"></audio>
 </body>
 </html>
