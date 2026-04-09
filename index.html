@@ -98,6 +98,28 @@
         .ms-cell.revealed[data-mines="6"] { color: #0f766e; }
         .ms-cell.revealed[data-mines="7"] { color: #0f172a; }
         .ms-cell.revealed[data-mines="8"] { color: #475569; }
+.fullscreen-mode {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 9999 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    overflow-y: auto;
+    background-color: white;
+}
+
+body.has-fullscreen nav {
+    display: none !important;
+}
+
+body.has-fullscreen main {
+    margin-top: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+}
     </style>
 </head>
 <body class="bg-slate-100 font-sans min-h-screen pb-10">
@@ -568,6 +590,18 @@ function playMSAudio(id) {
     if (sound) {
         sound.currentTime = 0; // Reset to start for rapid clicks
         sound.play().catch(e => console.log("Audio play blocked until user interacts"));
+    }
+}
+
+function toggleMinesweeperFullscreen() {
+    const msSection = document.getElementById('minesweeper');
+    const body = document.body;
+    
+    msSection.classList.toggle('fullscreen-mode');
+    body.classList.toggle('has-fullscreen');
+    
+    if (msSection.classList.contains('fullscreen-mode')) { // scroll to the top
+        window.scrollTo(0, 0);
     }
 }
 
@@ -1081,7 +1115,12 @@ document.addEventListener('DOMContentLoaded', toggleCustomMinesweeper);
         </section>
 
         <section id="minesweeper" class="tool-card bg-white p-6 rounded-xl shadow-md">
-            <h2 class="text-xl font-bold mb-6">Minesweeper</h2>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold mb-6">Minesweeper</h2>
+            <button onclick="toggleMinesweeperFullscreen()" class="bg-slate-200 hover:bg-slate-300 p-2 rounded-lg transition-colors" title="Toggle Fullscreen">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </button>
+    </div>
             <div class="flex flex-col md:flex-row justify-center items-center gap-4 mb-4">
                 <select id="minesweeper-difficulty" onchange="toggleCustomMinesweeper()" class="border p-2 rounded w-full md:w-auto">
                     <option value="easy">8x8 (10 mines)</option>
